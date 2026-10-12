@@ -209,7 +209,7 @@
     // ?data=<file>.topojson loads another data set from this folder, with its own saved edits
     const dataParam = new URLSearchParams(location.search).get('data') || '';
     const altData = /^[\w-]+\.topojson$/.test(dataParam) ? dataParam : '';
-    const DATA_URL = altData || 'data/cities.topojson';
+    const DATA_URL = altData || 'data/cities.json';
     const STORAGE_KEY = 'metrocity_edits_v2' + (altData ? ':' + altData : '');
     const VIEW_KEY = 'metrocity_view';
     const USER_KEY = 'metrocity_user';

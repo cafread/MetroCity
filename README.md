@@ -18,7 +18,7 @@ The API and the editor page are deployed at https://metrocity.colin-read.workers
 | Path | What |
 |---|---|
 | `data/cities/<CC>.ndjson` | The record: one city per line, per country. Outline coordinates are integers of 1e-7 degrees |
-| `tools/build.ts` | Turns the data into `public/data/`: `lookup.bin`, `names.json`, `changelog.json`, `cities.topojson`, `version.json` |
+| `tools/build.ts` | Turns the data into `public/data/`: `lookup.bin`, `names.json`, `changelog.json`, `cities.json` (TopoJSON), `version.json` |
 | `public/index.html` | The editor |
 | `public/res/` | GeoNames places over 5,000 people (eight columns of `cities5000.txt`) and state codes, for adding a city |
 | `src/lookup.ts` | Reads `lookup.bin` in place and finds the city containing a point |
