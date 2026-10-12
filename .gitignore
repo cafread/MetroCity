@@ -1,0 +1,4 @@
+public/data/
+.wrangler/
+node_modules/
+*.log
