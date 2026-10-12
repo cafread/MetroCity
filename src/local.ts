@@ -6,7 +6,7 @@ import { createLookup } from "./lookup.ts";
 
 const dir = new URL("../public/", import.meta.url);
 const read = (path: string) => Deno.readFile(new URL(path, dir));
-const types: Record<string, string> = { html: "text/html", js: "text/javascript", css: "text/css", json: "application/json", bin: "application/octet-stream", tsv: "text/plain", png: "image/png" };
+const types: Record<string, string> = { html: "text/html", js: "text/javascript", css: "text/css", json: "application/json", topojson: "application/json", txt: "text/plain", bin: "application/octet-stream", tsv: "text/plain", png: "image/png" };
 
 const log = JSON.parse(new TextDecoder().decode(await read("data/changelog.json")));
 const service: Service = {

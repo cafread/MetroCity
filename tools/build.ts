@@ -2,6 +2,8 @@
 //   lookup.bin      geometry and quadtree, read in place by src/lookup.ts
 //   names.json      city id -> display name
 //   changelog.json  per city: name, last change, bounding box
+//   cities.topojson the outlines as the editor reads them
+//   version.json    data version, bundled into the Worker
 // Runs on Deno or Node with no dependencies: deno run -A tools/build.ts | node tools/build.ts
 
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -151,8 +153,27 @@ const changelog = {
     removed: {},
 };
 
+const closed = (g: number[]) => {
+    const ring: number[][] = [];
+    for (let j = 0; j < g.length; j += 2) ring.push([g[j] / SCALE, g[j + 1] / SCALE]);
+    ring.push(ring[0]);
+    return ring;
+};
+const topology = {
+    type: "Topology",
+    objects: {
+        cities: {
+            type: "GeometryCollection",
+            geometries: cities.map((c, k) => ({ type: "Polygon", arcs: [[k]], properties: { id: c.i, name: c.n, population: c.p, lat: c.la, lon: c.lo } })),
+        },
+    },
+    arcs: cities.map((c) => closed(c.g)),
+};
+
 const out = join(root, "public/data");
 await mkdir(out, { recursive: true });
+await writeFile(join(out, "cities.topojson"), JSON.stringify(topology));
+await writeFile(join(out, "version.json"), JSON.stringify({ version: changelog.version }));
 await writeFile(join(out, "lookup.bin"), lookup);
 await writeFile(join(out, "names.json"), JSON.stringify(names));
 await writeFile(join(out, "changelog.json"), JSON.stringify(changelog));
