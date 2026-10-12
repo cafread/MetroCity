@@ -2,7 +2,7 @@
 //   lookup.bin      geometry and quadtree, read in place by src/lookup.ts
 //   names.json      city id -> display name
 //   changelog.json  per city: name, last change, bounding box
-//   cities.topojson the outlines as the editor reads them
+//   cities.json     the outlines as TopoJSON, read by the editor
 //   version.json    data version, bundled into the Worker
 // Runs on Deno or Node with no dependencies: deno run -A tools/build.ts | node tools/build.ts
 
@@ -172,7 +172,7 @@ const topology = {
 
 const out = join(root, "public/data");
 await mkdir(out, { recursive: true });
-await writeFile(join(out, "cities.topojson"), JSON.stringify(topology));
+await writeFile(join(out, "cities.json"), JSON.stringify(topology));
 await writeFile(join(out, "version.json"), JSON.stringify({ version: changelog.version }));
 await writeFile(join(out, "lookup.bin"), lookup);
 await writeFile(join(out, "names.json"), JSON.stringify(names));
