@@ -15,10 +15,16 @@ let started = 0;
 
 export default {
     async fetch(request: Request, env: Env): Promise<Response> {
-        const url = new URL(request.url);
-        if (url.pathname === "/changelog") return env.ASSETS.fetch(new Request(url.origin + "/data/changelog.json"));
-        started ||= Date.now();
-        const service: Service = { lookup, names, limit: Number(env.REQ_LIMIT ?? 1000), version: `MetroCity, data ${meta.version}`, started };
-        return (await route(request, service)) ?? env.ASSETS.fetch(request);
+        try {
+            const url = new URL(request.url);
+            const read = request.method === "GET" || request.method === "HEAD";
+            if (url.pathname === "/changelog" && read) return env.ASSETS.fetch(new Request(url.origin + "/data/changelog.json", request));
+            started ||= Date.now();
+            const limit = Number(env.REQ_LIMIT);
+            const service: Service = { lookup, names, limit: Number.isInteger(limit) && limit > 0 ? limit : 1000, version: `MetroCity, data ${meta.version}`, started };
+            return (await route(request, service)) ?? env.ASSETS.fetch(request);
+        } catch {
+            return new Response("Server error", { status: 500 });
+        }
     },
 };

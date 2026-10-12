@@ -9,6 +9,7 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { type City, cityProblem, MAX_CITIES } from "../src/cities.ts";
 import { MAGIC, ROOT, ROOT_SIZE, SCALE } from "../src/lookup.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -16,25 +17,42 @@ const MAX_DEPTH = 10;
 const MIN_DEPTH = 8;
 const SMALL_LEAF = 2;
 
-type City = { i: number; n: string; p: number; la: number; lo: number; t: number; g: number[] };
+// A build with fewer cities than this is taken to be a mistake, such as an emptied file
+const MIN_CITIES = 3000;
 
 const cities: City[] = [];
-for (const file of (await readdir(join(root, "data/cities"))).filter((f) => f.endsWith(".ndjson")).sort()) {
-    for (const line of (await readFile(join(root, "data/cities", file), "utf8")).split("\n")) {
-        if (line.trim()) cities.push(JSON.parse(line));
-    }
+const problems: string[] = [];
+const ids = new Map<number, string>();
+const namesSeen = new Map<string, string>();
+for (const file of (await readdir(join(root, "data/cities"))).sort()) {
+    if (!/^[A-Z]{2}\.ndjson$/.test(file)) { problems.push(`data/cities/${file}: not a <CC>.ndjson file`); continue; }
+    const lines = (await readFile(join(root, "data/cities", file), "utf8")).split("\n");
+    if (!lines.some((l) => l.trim())) problems.push(`data/cities/${file}: empty; delete the file if the country has no cities`);
+    lines.forEach((line, k) => {
+        if (!line.trim()) return;
+        const at = `data/cities/${file}:${k + 1}`;
+        let city: City;
+        try { city = JSON.parse(line); } catch { problems.push(`${at}: not valid JSON`); return; }
+        const problem = cityProblem(city, file.slice(0, 2));
+        if (problem) { problems.push(`${at}: ${problem}`); return; }
+        if (ids.has(city.i)) problems.push(`${at}: id ${city.i} is already used at ${ids.get(city.i)}`);
+        if (namesSeen.has(city.n)) problems.push(`${at}: name "${city.n}" is already used at ${namesSeen.get(city.n)}`);
+        ids.set(city.i, at);
+        namesSeen.set(city.n, at);
+        cities.push(city);
+    });
+}
+if (cities.length < MIN_CITIES || cities.length > MAX_CITIES) problems.push(`${cities.length} valid cities; expected ${MIN_CITIES} to ${MAX_CITIES}`);
+if (problems.length) {
+    console.error(problems.slice(0, 50).join("\n"));
+    console.error(`${problems.length} problem(s) in the data; nothing was built`);
+    process.exit(1);
 }
 cities.sort((a, b) => a.i - b.i);
-const seen = new Set<number>();
-for (const c of cities) {
-    if (seen.has(c.i)) throw new Error(`city ${c.i} appears twice`);
-    if (c.g.length < 6 || c.g.length % 2) throw new Error(`city ${c.i} has a bad outline`);
-    seen.add(c.i);
-}
 
 const nCity = cities.length;
 const nVert = cities.reduce((sum, c) => sum + c.g.length / 2, 0);
-const ids = Int32Array.from(cities, (c) => c.i);
+const idList = Int32Array.from(cities, (c) => c.i);
 const start = new Uint32Array(nCity + 1);
 const box = new Int32Array(nCity * 4);
 const xy = new Int32Array(nVert * 2);
@@ -134,7 +152,7 @@ split(ROOT, ROOT, ROOT_SIZE, 0, Array.from({ length: nVert }, (_, a) => a), Arra
 
 const sections: ArrayBufferView[] = [
     Uint32Array.from([MAGIC, nCity, nVert, nodes.length, mixStart.length - 1, mixItems.length, 0, 0]),
-    ids, start, box, xy, Int32Array.from(nodes), Uint32Array.from(mixStart), Uint16Array.from(mixItems),
+    idList, start, box, xy, Int32Array.from(nodes), Uint32Array.from(mixStart), Uint16Array.from(mixItems),
 ];
 const padded = (bytes: number) => Math.ceil(bytes / 4) * 4;
 const lookup = new Uint8Array(sections.reduce((sum, s) => sum + padded(s.byteLength), 0));
@@ -144,11 +162,14 @@ for (const s of sections) {
     at += padded(s.byteLength);
 }
 
+// Workers Builds sets WORKERS_CI_COMMIT_SHA; a build there without it must not deploy as "dev"
+const version = process.env.DATA_VERSION ?? process.env.WORKERS_CI_COMMIT_SHA ?? (process.env.WORKERS_CI ? "" : "dev");
+if (!version) throw new Error("no commit hash for the data version");
+
 const names = Object.fromEntries(cities.map((c) => [c.i, c.n]));
 const round = (n: number) => Math.round(n / (SCALE / 1e4)) / 1e4;
 const changelog = {
-    version: process.env.DATA_VERSION ?? "dev",
-    generated: Date.now(),
+    version,
     cities: Object.fromEntries(cities.map((c, k) => [c.i, { n: c.n, t: c.t, b: [round(box[k * 4]), round(box[k * 4 + 1]), round(box[k * 4 + 2]), round(box[k * 4 + 3])] }])),
     removed: {},
 };
