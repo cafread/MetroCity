@@ -2,6 +2,8 @@
     "name": "metrocity",
     "main": "src/worker.ts",
     "compatibility_date": "2026-10-01",
+    "workers_dev": true,
+    "preview_urls": false,
     "assets": { "directory": "./public", "binding": "ASSETS" },
     "build": { "command": "node tools/build.ts" },
     "vars": { "REQ_LIMIT": "1000" }
