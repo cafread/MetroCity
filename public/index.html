@@ -238,7 +238,8 @@
     let newVersion = '';           // a later version seen since: a deploy has landed
     let pushing = false;
     let readOnly = false;          // another tab holds the saved edits
-    let user = 'anon';             // mock login: a name kept in the browser, no password
+    let user = 'anon';             // the signed-in GitHub login; on a server without sign-in, a name typed in and kept in the browser
+    let signIn = false;            // the server has GitHub sign-in
     let undoStack = [];            // operations: { label, before: {id: snapshot|null}, after: {id: snapshot|null} }
     let redoStack = [];
     let geojsonLayer = null;
@@ -1447,6 +1448,8 @@
     $('commitAllBtn').addEventListener('click', () => commitCities(dirtyIds()));
     $('pushBtn').addEventListener('click', push);
     $('loginBtn').addEventListener('click', () => {
+      if (signIn && user === 'anon') { location.href = '/edit/login'; return; }
+      if (signIn) { fetch('/edit/logout', { method: 'POST' }).then(() => setUser('anon')); return; }
       if (user !== 'anon') { setUser('anon'); return; }
       $('loginForm').style.display = 'block';
       $('loginName').focus();
@@ -1617,6 +1620,16 @@
 
     try { user = localStorage.getItem(USER_KEY) || 'anon'; } catch (_) { /* stay anon */ }
     renderUser();
+    fetch('/edit/me', { cache: 'no-store' })
+      .then(res => (res.ok ? res.json() : null))
+      .then(me => {
+        if (!me) return;
+        signIn = true;
+        user = me.user || 'anon';
+        renderUser();
+        renderChanges();
+      })
+      .catch(() => { /* no sign-in here: the typed name stands */ });
     showInfo();
   </script>
 </body>
