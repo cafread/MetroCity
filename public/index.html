@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous" />
   <style>
     body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
     #map { position: absolute; top: 0; bottom: 0; left: 0; right: 300px; }
@@ -170,6 +170,7 @@
       <div id="committedList"></div>
       <div class="row">
         <button id="pushBtn" class="primary" disabled>Push</button>
+        <button id="buildBtn" style="display: none;" title="Ask for the build again, if a pushed commit has not gone live after a few minutes">Request build</button>
       </div>
       <div class="caption">Save locally</div>
       <div class="row" style="margin-top: 0;">
@@ -185,19 +186,14 @@
     <div class="panel" id="stats"></div>
   </div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
-  <script src="https://unpkg.com/topojson-server@3.0.1/dist/topojson-server.min.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/topojson-client@3.1.0/dist/topojson-client.min.js" integrity="sha384-Ukv1p/xTma6P4/2bY5KzWBw+ydSpXmhCMtyciIQVDJ1RmOxtCYNMF1uXT9T63H67" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/topojson-server@3.0.1/dist/topojson-server.min.js" integrity="sha384-EGGi0ZOg8HVoOnwRqLjbGP5qq9Y86E3NN32QmSuisc1rfmvrk+LflAvcgIJU4j5P" crossorigin="anonymous"></script>
   <script>
-    // Development mode: when served from localhost, report errors and edit actions to
-    // dev_server.ts (POST /dev/log, written to dev.log) and show errors in the sidebar.
+    // On localhost, errors are shown in the sidebar
     const DEV = ['localhost', '127.0.0.1'].includes(location.hostname);
-    function devLog(level, message, extra) {
+    function devLog(level, message) {
       if (!DEV) return;
-      try {
-        // client and page tell a person's tab from an automated test, and a stale tab from a fresh one
-        navigator.sendBeacon('/dev/log', JSON.stringify({ time: new Date().toISOString(), level, message, ...extra, client: navigator.webdriver || /Headless/.test(navigator.userAgent) ? 'automation' : 'browser', page: document.lastModified }));
-      } catch (_) { /* logging must never break the page */ }
       if (level !== 'op' && level !== 'info') {
         const box = document.getElementById('devErrors');
         box.style.display = 'block';
@@ -238,6 +234,7 @@
     let dataVersion = '';          // version of the published data this page loaded
     let newVersion = '';           // a later version seen since: a deploy has landed
     let pushing = false;
+    let unsaved = false;           // the last write to localStorage failed, so a reload would lose edits
     let readOnly = false;          // another tab holds the saved edits
     let user = 'anon';             // the signed-in GitHub login; on a server without sign-in, a name typed in and kept in the browser
     let signIn = false;            // the server has GitHub sign-in
@@ -384,6 +381,7 @@
     // and a centre that is missing in older saved edits must not make a city look changed.
     // Coordinates are compared at the files' precision, so a city read back after a deploy matches.
     const fileUnit = v => Math.round(v * 1e7);
+    const onGrid = p => [fileUnit(p[0]) / 1e7, fileUnit(p[1]) / 1e7];
     const stateKey = snap => (snap ? JSON.stringify([snap.name, snap.population, snap.lat ?? null, snap.lon ?? null, snap.coordinates.map(ring => ring.map(c => [fileUnit(c[0]), fileUnit(c[1])]))]) : 'none');
     const sameState = (a, b) => stateKey(a) === stateKey(b);
 
@@ -427,6 +425,7 @@
     // Record an edit that has already been made to the layers. `before` is capture() taken
     // before the edit. Returns false when nothing actually changed.
     function record(label, before) {
+      if (pushing) return false;
       const op = { label, before: {}, after: {} };
       Object.keys(before).forEach(key => {
         const id = Number(key);
@@ -439,7 +438,6 @@
       if (Object.keys(op.after).length === 0) return false;
       undoStack.push(op);
       redoStack = [];
-      devLog('op', label, { cities: Object.keys(op.after).map(Number) });
       afterChange(label);
       return true;
     }
@@ -450,7 +448,6 @@
       Object.keys(op.before).forEach(key => applySnapshot(Number(key), op.before[key]));
       reselect(op);
       redoStack.push(op);
-      devLog('op', `Undo: ${op.label}`);
       afterChange(`Undid: ${op.label}`);
     }
 
@@ -460,7 +457,6 @@
       Object.keys(op.after).forEach(key => applySnapshot(Number(key), op.after[key]));
       reselect(op);
       undoStack.push(op);
-      devLog('op', `Redo: ${op.label}`);
       afterChange(`Redid: ${op.label}`);
     }
 
@@ -483,8 +479,8 @@
       if (!before) return 'new';
       if (!now) return 'deleted';
       const moved = JSON.stringify(before.coordinates) !== JSON.stringify(now.coordinates);
-      const renamed = before.name !== now.name || before.population !== now.population;
-      return moved && renamed ? 'edited' : moved ? 'reshaped' : 'renamed';
+      const renamed = before.name !== now.name, counted = before.population !== now.population;
+      return moved && (renamed || counted) ? 'edited' : moved ? 'reshaped' : renamed ? 'renamed' : 'population';
     }
 
     function revertCity(id) {
@@ -524,6 +520,7 @@
     }
 
     function commitCities(ids) {
+      if (pushing) return;
       const nameCount = new Map();
       cities.forEach(layer => nameCount.set(layer.feature.properties.name, (nameCount.get(layer.feature.properties.name) || 0) + 1));
       const blocked = ids.filter(id => commitBlock(id, nameCount));
@@ -531,7 +528,6 @@
       const names = ids.filter(id => !blocked.includes(id)).map(id => [id, cityName(id)]).filter(([id]) => commitCity(id)).map(pair => pair[1]);
       if (names.length) {
         const label = names.length === 1 ? `Committed ${names[0]}` : `Committed ${names.length} cities`;
-        devLog('op', label, { user });
         afterChange(label);
       }
       if (refusal) setStatus(refusal, true);
@@ -541,11 +537,10 @@
     // Not once pushed: the push cannot be taken back from here.
     function uncommitCity(id) {
       const entry = committed.get(id);
-      if (!entry || entry.push) return;
+      if (!entry || entry.push || pushing) return;
       const label = `Uncommitted ${cityName(id)}`;
       baseline.set(id, entry.file);
       committed.delete(id);
-      devLog('op', label, { user });
       afterChange(label);
     }
 
@@ -571,44 +566,54 @@
     // locked while the request is out. A pushed commit is settled by the load that follows its deploy.
     async function push() {
       const entries = unpushedIds().map(id => [id, committed.get(id)]);
-      if (user === 'anon' || entries.length === 0 || pushing || readOnly) return;
+      if (user === 'anon' || entries.length === 0 || pushing || readOnly || altData) return;
       const toFile = snap => snap && { name: snap.name, population: snap.population, lat: snap.lat, lon: snap.lon, coordinates: wrapRings(snap.coordinates, wrapOut) };
       const count = `${entries.length} ${entries.length === 1 ? 'commit' : 'commits'}`;
       pushing = true;
+      document.body.inert = true;
       $('busy').style.display = 'flex';
       try {
-        const res = await fetch('/edit/push', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user, changes: entries.map(([id, entry]) => ({ id, file: toFile(entry.file), state: toFile(entry.state) })) }) });
+        const res = await fetch('/edit/push', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ changes: entries.map(([id, entry]) => ({ id, file: toFile(entry.file), state: toFile(entry.state) })) }) });
         const reply = await res.json().catch(() => ({}));
         if (res.status === 409) {
+          const which = (Array.isArray(reply.changed) ? reply.changed : []).map(cityName).join(', ');
           $('deployNote').style.display = 'block';
-          setStatus('Push refused: the published data has changed under these commits. Reload to pick it up; commits made on the old data are dropped', true);
+          setStatus(`Push refused, nothing was written: the published data has changed under ${which || 'these commits'}. Reload to pick it up; commits made on the old data are dropped`, true);
+        } else if (res.status === 401 && signIn) {
+          user = 'anon';
+          renderUser();
+          renderChanges();
+          setStatus('Push failed: the sign-in has expired. Log in and push again; the commits are kept', true);
+        } else if (res.status === 503) {
+          checkVersion();
+          throw new Error(Array.isArray(reply.problems) ? reply.problems.join('; ') : 'the server is busy');
         } else if (!res.ok) {
           throw new Error(Array.isArray(reply.problems) ? reply.problems.join('; ') : res.status === 501 ? 'this server does not accept pushes' : `HTTP ${res.status}`);
         } else {
           const at = new Date().toISOString();
-          entries.forEach(([, entry]) => { entry.push = { commit: reply.commit, by: user, at }; });
-          devLog('op', `Pushed ${count}`, { user, commit: reply.commit });
+          entries.forEach(([, entry]) => { entry.push = { commit: reply.commit, by: user, at, base: dataVersion }; });
           afterChange(`Pushed ${count} as ${user}; awaiting deploy`);
           if (reply.build && reply.build !== 'requested') setStatus(`Pushed ${count} as ${user}, but the build was ${reply.build}: it goes live with the next build of the published data`, true);
-          checkVersion();
+          checkVersion(true);
         }
       } catch (err) {
         console.error('Push failed:', err);
         setStatus('Push failed: ' + err.message, true);
       } finally {
         pushing = false;
+        document.body.inert = false;
         $('busy').style.display = 'none';
       }
     }
 
     // The published data's version names the commit it was built from, so a change means a deploy
     // has landed. Nothing is merged in place: the reload replays the saved edits against the new data.
-    function checkVersion() {
+    function checkVersion(afterPush = false) {
       return fetch('data/version.json', { cache: 'no-store' })
         .then(res => (res.ok ? res.json() : null))
         .then(v => {
           if (!v || !v.version) return;
-          if (!dataVersion) dataVersion = v.version;
+          if (!dataVersion && !afterPush && !loaded) dataVersion = v.version;
           else if (v.version !== dataVersion && v.version !== newVersion) {
             newVersion = v.version;
             $('deployNote').style.display = 'block';
@@ -619,9 +624,10 @@
     // A tab with pushed commits reloads itself once their deploy lands, keeping edit mode and the
     // selected city. It waits while a drag, a drawing or a half-typed name or population is under
     // way; the notice and its Reload button stay up meanwhile.
+    let loaded = false;            // the published data has been read; its version is not adopted after that
     const awaitingDeploy = () => Array.from(committed.values()).some(entry => entry.push);
     function reloadWhenIdle() {
-      if (!newVersion || !awaitingDeploy() || drag || drawing || pushing || ['cityName', 'cityPop'].includes((document.activeElement || {}).id)) return;
+      if (!newVersion || !awaitingDeploy() || drag || drawing || pushing || unsaved || chosenPlace || ['cityName', 'cityPop', 'placeSearch', 'loginName'].includes((document.activeElement || {}).id)) return;
       try { sessionStorage.setItem(RESUME_KEY, JSON.stringify({ edit: editMode, selected: selectedId })); } catch (_) { /* reloads without them */ }
       location.reload();
     }
@@ -629,6 +635,17 @@
       if (newVersion) reloadWhenIdle();
       else if (awaitingDeploy()) checkVersion().then(reloadWhenIdle);
     }, 5000);
+
+    // For a pushed commit whose build never started
+    async function requestBuild() {
+      try {
+        const res = await fetch('/edit/build', { method: 'POST' });
+        const reply = await res.json().catch(() => ({}));
+        setStatus(res.ok ? `Build ${reply.build}` : 'Build not requested: ' + (Array.isArray(reply.problems) ? reply.problems.join('; ') : `HTTP ${res.status}`), !res.ok || reply.build !== 'requested');
+      } catch (err) {
+        setStatus('Build not requested: ' + err.message, true);
+      }
+    }
     window.addEventListener('focus', () => { if (dataVersion && !newVersion) checkVersion(); });
 
     function setUser(name) {
@@ -637,7 +654,6 @@
         if (user === 'anon') localStorage.removeItem(USER_KEY);
         else localStorage.setItem(USER_KEY, user);
       } catch (_) { /* the login is a convenience */ }
-      devLog('op', user === 'anon' ? 'Logged out' : `Logged in as ${user}`);
       renderUser();
       renderChanges();
     }
@@ -663,14 +679,13 @@
       $('redoBtn').disabled = redoStack.length === 0;
       $('undoBtn').title = undoStack.length ? `Undo: ${undoStack[undoStack.length - 1].label} (Ctrl+Z)` : 'Ctrl+Z';
       $('redoBtn').title = redoStack.length ? `Redo: ${redoStack[redoStack.length - 1].label} (Ctrl+Y)` : 'Ctrl+Y';
-      save();
-      if (message) setStatus(message);
+      if (save() && message) setStatus(message);
     }
 
     // Edits are kept in the browser between visits. Each changed city is stored with the
     // state it was loaded in, so revert still works after a reload.
     function save() {
-      if (readOnly) return;
+      if (readOnly) return true;
       const changes = {};
       dirtyIds().forEach(id => { changes[id] = { original: baseline.get(id), current: snapshot(id) }; });
       const commits = {};
@@ -678,10 +693,13 @@
       try {
         if (Object.keys(changes).length === 0 && committed.size === 0) localStorage.removeItem(STORAGE_KEY);
         else localStorage.setItem(STORAGE_KEY, JSON.stringify({ savedAt: new Date().toISOString(), changes, committed: commits }));
+        unsaved = false;
       } catch (err) {
         console.error('Could not save edits to localStorage:', err);
-        setStatus('Could not save edits in this browser: ' + err.message, true);
+        unsaved = true;
+        setStatus('Edits since the last save are NOT stored in this browser and a reload will lose them: ' + err.message + '. Export changes to keep them', true);
       }
+      return !unsaved;
     }
 
     function restoreSaved() {
@@ -711,20 +729,27 @@
       const changes = saved.changes || {};
       const published = new Map();
       Object.keys({ ...commits, ...changes }).forEach(key => published.set(Number(key), snapshot(Number(key))));
-      let live = 0, dropped = 0;
+      // A stored city must be whole before it is drawn: a bad one is dropped, not allowed to stop the load
+      const whole = snap => snap === null || (snap && typeof snap.name === 'string' && Number.isFinite(snap.population) && Array.isArray(snap.coordinates) &&
+        snap.coordinates.every(ring => Array.isArray(ring) && ring.length > 3 && ring.every(c => Array.isArray(c) && Number.isFinite(c[0]) && Number.isFinite(c[1]))));
+      let live = 0, dropped = 0, unpublished = 0;
       Object.keys(commits).forEach(key => {
-        const id = Number(key);
-        const entry = { file: toMap(commits[key].file, id), state: toMap(commits[key].state, id), by: commits[key].by, at: commits[key].at, push: commits[key].push || null };
+        const id = Number(key), c = commits[key] || {};
+        if (!whole(c.file) || !whole(c.state)) { dropped++; return; }
+        const entry = { file: toMap(c.file, id), state: toMap(c.state, id), by: String(c.by), at: String(c.at), push: c.push && typeof c.push === 'object' ? { commit: String(c.push.commit), by: String(c.push.by), at: String(c.push.at), base: c.push.base } : null };
         if (sameState(published.get(id), entry.state)) { live++; return; }
         if (!sameState(published.get(id), entry.file)) { dropped++; return; }
+        // Pushed, yet a later version of the data still holds the old city: the push never went live
+        if (entry.push && dataVersion && entry.push.base && dataVersion !== entry.push.base) { entry.push = null; unpublished++; }
         committed.set(id, entry);
         baseline.set(id, entry.state);
         applySnapshot(id, entry.state);
       });
       let pending = 0;
       Object.keys(changes).forEach(key => {
-        const id = Number(key);
-        const original = toMap(changes[key].original, id), current = toMap(changes[key].current, id);
+        const id = Number(key), c = changes[key] || {};
+        if (!whole(c.original) || !whole(c.current)) { dropped++; return; }
+        const original = toMap(c.original, id), current = toMap(c.current, id);
         const base = committed.has(id) ? committed.get(id).state : published.get(id);
         if (!sameState(base, original)) { dropped++; return; }
         baseline.set(id, original);
@@ -732,10 +757,11 @@
         applySnapshot(id, current);
       });
       const parts = [];
-      if (pending || committed.size) parts.push(`Restored ${pending} pending and ${committed.size} committed ${pending + committed.size === 1 ? 'city' : 'cities'} saved in this browser`);
+      if (pending || committed.size) parts.push(`Restored ${pending} pending and ${committed.size} committed ${committed.size === 1 ? 'city' : 'cities'} saved in this browser`);
       if (live) parts.push(`${live} ${live === 1 ? 'commit is' : 'commits are'} now live`);
+      if (unpublished) parts.push(`${unpublished} pushed ${unpublished === 1 ? 'commit' : 'commits'} did not go live and can be pushed again`);
       if (dropped) parts.push(`${dropped} saved ${dropped === 1 ? 'edit was' : 'edits were'} dropped: the published data changed under ${dropped === 1 ? 'it' : 'them'}`);
-      if (parts.length) setStatus(parts.join('. '), dropped > 0);
+      if (parts.length) setStatus(parts.join('. '), dropped + unpublished > 0);
     }
 
     function boundsMiss(layer, box) {
@@ -931,7 +957,7 @@
       drag.snap = findSnap(latlng, { excludeId: selectedId, skip: drag.skip });
       showSnapPreview(drag.snap);
       const target = drag.snap ? drag.snap.latlng : latlng;
-      const p = [target.lng, target.lat];
+      const p = onGrid([target.lng, target.lat]);
       drag.refs.forEach(ref => setVertex(ringsOf(ref.id)[ref.r], ref.i, p));
       drag.ids.forEach(redraw);
       drag.marker.setLatLng(target);
@@ -957,7 +983,7 @@
           before[d.snap.id] = snapshot(d.snap.id);
           ids.push(d.snap.id);
         }
-        insertOnNearestEdge(d.snap.id, [d.snap.latlng.lng, d.snap.latlng.lat]);
+        insertOnNearestEdge(d.snap.id, onGrid([d.snap.latlng.lng, d.snap.latlng.lat]));
       }
       let collapsed = false;
       ids.forEach(id => {
@@ -1001,7 +1027,7 @@
       }
       const ring = ringsOf(selectedId)[near.r];
       const a = ring[near.i], b = ring[near.i + 1];
-      const p = [near.latlng.lng, near.latlng.lat];
+      const p = onGrid([near.latlng.lng, near.latlng.lat]);
       if (same(p, a) || same(p, b)) return;
       // Cities that share this edge get the vertex too, so the border stays shared
       const targets = [{ id: selectedId, r: near.r, i: near.i }];
@@ -1156,7 +1182,7 @@
     function drawingClick(latlng) {
       const snap = findSnap(latlng);
       const target = snap ? snap.latlng : latlng;
-      const p = [target.lng, target.lat];
+      const p = onGrid([target.lng, target.lat]);
       const pts = drawing.points;
       if (pts.length >= 3 && pixelDist(map.latLngToContainerPoint(latlng), toPoint(pts[0])) <= CLOSE_RING_PX) {
         finishDrawing();
@@ -1240,6 +1266,7 @@
     map.on('zoomend', refreshVertexMarkers);
 
     document.addEventListener('keydown', e => {
+      if (pushing) return;
       const typing = ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName);
       if (e.key === 'Escape' && drawing) cancelDrawing();
       else if (e.key === 'Enter' && drawing && !typing) finishDrawing();
@@ -1266,7 +1293,7 @@
       const facts = `<strong>GeoNames ID:</strong> ${id}<br><strong>Centre:</strong> ${centre}<br><strong>Vertices:</strong> ${countVertices(cities.get(id).feature)}`;
       if (!editMode) {
         delete info.dataset.cityId;
-        info.innerHTML = `<h3>${esc(props.name)}</h3><p><strong>Population:</strong> ${props.population.toLocaleString()}</p><p>${facts}</p>`;
+        info.innerHTML = `<h3>${esc(props.name)}</h3><p><strong>Population:</strong> ${Number(props.population).toLocaleString()}</p><p>${facts}</p>`;
         return;
       }
       // Build the form once per city and update it in place afterwards. Rebuilding it while a
@@ -1338,7 +1365,7 @@
     function listItem(id, name, kind, actions, title) {
       const tagClass = { new: 'new', deleted: 'deleted', 'awaiting deploy': 'pushed' }[kind] || '';
       const buttons = actions.map(a => `<button class="small" data-act="${a.toLowerCase()}">${a}</button>`).join('');
-      return `<div class="change-item" data-id="${id}"><span class="name" title="${esc(title || name)}">${esc(name)}</span><span class="tag ${tagClass}">${kind}</span>${buttons}</div>`;
+      return `<div class="change-item" data-id="${Number(id)}"><span class="name" title="${esc(title || name)}">${esc(name)}</span><span class="tag ${tagClass}">${kind}</span>${buttons}</div>`;
     }
 
     function renderChanges() {
@@ -1346,19 +1373,20 @@
       const unpushed = unpushedIds();
       $('changesPanel').style.display = pending.length || committed.size ? 'block' : 'none';
       $('changesTitle').textContent = `Pending changes (${pending.length})`;
-      $('pendingButtons').style.display = pending.length ? 'flex' : 'none';
-      $('changeList').innerHTML = pending.map(id => listItem(id, cityName(id), changeKind(baseline.get(id), snapshot(id)), ['Commit', 'Revert'])).join('');
+      $('pendingButtons').style.display = pending.length && !readOnly ? 'flex' : 'none';
+      $('changeList').innerHTML = pending.map(id => listItem(id, cityName(id), changeKind(baseline.get(id), snapshot(id)), readOnly ? [] : ['Commit', 'Revert'])).join('');
       $('committedTitle').textContent = `Committed (${committed.size})`;
       $('committedList').innerHTML = Array.from(committed, ([id, entry]) => listItem(
         id,
         (entry.state || entry.file).name,
         entry.push ? 'awaiting deploy' : changeKind(entry.file, entry.state),
-        entry.push ? [] : ['Uncommit'],
+        entry.push || readOnly ? [] : ['Uncommit'],
         `Committed by ${entry.by} at ${entry.at}` + (entry.push ? `, pushed by ${entry.push.by} at ${entry.push.at} as ${entry.push.commit}` : '')
       )).join('');
       $('pushBtn').textContent = unpushed.length ? `Push (${unpushed.length})` : 'Push';
-      $('pushBtn').disabled = user === 'anon' || unpushed.length === 0 || readOnly;
-      $('pushBtn').title = user === 'anon' ? 'Log in to push the commits' : 'Publish the commits';
+      $('pushBtn').disabled = user === 'anon' || unpushed.length === 0 || readOnly || Boolean(altData);
+      $('pushBtn').title = altData ? 'This is a scratch data set: its commits can be exported, not pushed' : user === 'anon' ? 'Log in to push the commits' : 'Publish the commits';
+      $('buildBtn').style.display = signIn && user !== 'anon' && awaitingDeploy() ? 'inline-block' : 'none';
     }
 
     function onChangeListClick(e) {
@@ -1376,7 +1404,7 @@
 
     function renderStats() {
       let totalPop = 0, totalVerts = 0;
-      cities.forEach(layer => { totalPop += layer.feature.properties.population; totalVerts += countVertices(layer.feature); });
+      cities.forEach(layer => { totalPop += Number(layer.feature.properties.population) || 0; totalVerts += countVertices(layer.feature); });
       $('stats').innerHTML = `
         <strong>Statistics:</strong><br>
         Cities: ${cities.size.toLocaleString()}<br>
@@ -1397,7 +1425,7 @@
       }
       $('results').style.maxHeight = small ? '60vh' : '';
       $('results').innerHTML = matches.map(p =>
-        `<div class="result-item" data-id="${p.id}">${esc(p.name)}${p.population ? ` (pop: ${p.population.toLocaleString()})` : ''}</div>`
+        `<div class="result-item" data-id="${p.id}">${esc(p.name)}${p.population ? ` (pop: ${Number(p.population).toLocaleString()})` : ''}</div>`
       ).join('');
     }
     $('search').addEventListener('input', e => renderResults(e.target.value.toLowerCase()));
@@ -1464,6 +1492,7 @@
     $('revertAllBtn').addEventListener('click', revertAll);
     $('commitAllBtn').addEventListener('click', () => commitCities(dirtyIds()));
     $('pushBtn').addEventListener('click', push);
+    $('buildBtn').addEventListener('click', requestBuild);
     $('loginBtn').addEventListener('click', () => {
       if (signIn && user === 'anon') { location.href = '/edit/login'; return; }
       if (signIn) { fetch('/edit/logout', { method: 'POST' }).then(() => setUser('anon')); return; }
@@ -1597,12 +1626,14 @@
         return lock ? new Promise(() => {}) : undefined; // held until the tab closes
       });
     });
+    holdsEdits.then(holds => { if (!holds) navigator.locks.request('metrocity:' + STORAGE_KEY, () => location.reload()); });
     $('reloadBtn').addEventListener('click', () => location.reload());
 
     // Load TopoJSON and convert to GeoJSON for Leaflet
     Promise.all([holdsEdits, checkVersion()])
       .then(([holds]) => {
         readOnly = !holds;
+        loaded = true;
         return fetch(DATA_URL, { cache: 'no-cache' });
       })
       .then(res => {
@@ -1634,10 +1665,9 @@
         if (restored) setStatus(restored, warn);
         if (readOnly) {
           $('editMode').disabled = true;
-          setStatus('The editor is open in another tab, which holds the saved edits. This tab is read-only', true);
+          setStatus('The editor is open in another tab, which holds the saved edits. This tab is read-only, and takes over when that one closes', true);
         }
         renderResults('');
-        devLog('info', `Loaded ${cities.size} cities from ${DATA_URL}`);
       })
       .catch(err => {
         console.error('Failed to load city data:', err);

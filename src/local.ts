@@ -12,6 +12,10 @@ const dir = new URL("public/", root);
 const read = (path: string) => Deno.readFile(new URL(path, dir));
 const types: Record<string, string> = { html: "text/html", js: "text/javascript", css: "text/css", json: "application/json", topojson: "application/json", txt: "text/plain", bin: "application/octet-stream", tsv: "text/plain", png: "image/png" };
 
+// The headers Cloudflare adds to static files, from public/_headers, so a policy that breaks the page shows here first.
+// Strict-Transport-Security is left out: this server is plain HTTP.
+const assetHeaders = Object.fromEntries(new TextDecoder().decode(await read("_headers")).split("\n").filter((l) => l.startsWith("  ") && !/^\s*strict-transport/i.test(l)).map((l) => [l.slice(0, l.indexOf(":")).trim(), l.slice(l.indexOf(":") + 1).trim()]));
+
 const service = { limit: Number(Deno.env.get("reqLim") ?? 1_000_000), started: Date.now() } as Service;
 async function load() {
     const log = JSON.parse(new TextDecoder().decode(await read("data/changelog.json")));
@@ -75,7 +79,8 @@ Deno.serve({ port: Number(Deno.env.get("PORT") ?? 3000), hostname: Deno.env.get(
         const name = decodeURIComponent(path.slice(1));
         const target = new URL("./" + name, dir);
         if (!/^[\w.-]+(\/[\w.-]+)*$/.test(name) || name.includes("..") || !target.href.startsWith(dir.href)) throw new Error("outside public");
-        return new Response(await Deno.readFile(target), { headers: { "content-type": types[path.split(".").pop() ?? ""] ?? "application/octet-stream" } });
+        if (name === "_headers") throw new Error("not a page");
+        return new Response(await Deno.readFile(target), { headers: { ...assetHeaders, "content-type": types[path.split(".").pop() ?? ""] ?? "application/octet-stream" } });
     } catch {
         return new Response("Not found", { status: 404 });
     }
