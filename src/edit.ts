@@ -90,8 +90,10 @@ async function push(request: Request, user: string, env: EditEnv, ctx: EditConte
 export async function edit(request: Request, env: EditEnv, ctx: EditContext): Promise<Response | null> {
     const url = new URL(request.url);
     if (!url.pathname.startsWith("/edit/")) return null;
-    const configured = env.EDIT_HOST && env.EDIT_REPO && env.EDIT_BRANCH && env.GITHUB_TOKEN && env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET && editors(env).length;
-    if (!configured || url.hostname !== env.EDIT_HOST) return new Response("Editing is not available here", { status: 501 });
+    // Names only, never values, so a half-configured Worker says what it lacks
+    const missing = (["EDIT_HOST", "EDIT_REPO", "EDIT_BRANCH", "EDITORS", "GITHUB_TOKEN", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"] as const).filter((k) => !env[k]?.trim());
+    if (missing.length) return new Response(`Editing is not set up: missing ${missing.join(", ")}`, { status: 501 });
+    if (url.hostname !== env.EDIT_HOST) return new Response("Editing is not available on this host", { status: 501 });
     const route = `${request.method} ${url.pathname}`;
     if (route === "GET /edit/me") return Response.json({ user: await sessionUser(request, env) || null }, { headers: { "cache-control": "no-store" } });
     if (route === "GET /edit/login") {
