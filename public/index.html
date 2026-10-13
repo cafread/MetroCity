@@ -107,7 +107,7 @@
         <button id="loginBtn" class="small">Log in</button>
       </div>
       <div id="loginForm" style="display: none; margin-top: 6px;">
-        <input type="text" id="loginName" placeholder="User name (mock login, no password)">
+        <input type="text" id="loginName" placeholder="User name (local server only, no password)">
         <div class="row" style="margin-top: 0;">
           <button id="loginOkBtn" class="primary">Log in</button>
           <button id="loginCancelBtn">Cancel</button>
@@ -631,6 +631,9 @@
     function renderUser() {
       $('userName').textContent = user;
       $('loginBtn').textContent = user === 'anon' ? 'Log in' : 'Log out';
+      // A typed name stands in for sign-in on the local server only
+      $('loginBtn').disabled = !signIn && !DEV;
+      $('loginBtn').title = signIn || DEV ? '' : 'Sign-in is not set up on this server';
       $('loginForm').style.display = 'none';
     }
 
@@ -1618,7 +1621,7 @@
         $('loading').textContent = 'Error loading data: ' + err.message;
       });
 
-    try { user = localStorage.getItem(USER_KEY) || 'anon'; } catch (_) { /* stay anon */ }
+    try { user = (DEV && localStorage.getItem(USER_KEY)) || 'anon'; } catch (_) { /* stay anon */ }
     renderUser();
     fetch('/edit/me', { cache: 'no-store' })
       .then(res => (res.ok ? res.json() : null))
