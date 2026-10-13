@@ -17,7 +17,7 @@ const svc: Service = {
     version: "test",
     started: Date.now(),
 };
-const DIFFERENT_ROWS = [184, 366, 547, 858, 1076, 1201, 1438, 1749, 1810];
+const DIFFERENT_ROWS = [140, 184, 275, 366, 547, 731, 734, 735, 738, 782, 858, 1076, 1201, 1438, 1580, 1596, 1669, 1670, 1749, 1810, 1892, 1962, 1964];
 const call = (method: string, path: string, body?: string, service = svc) =>
     route(new Request(`http://localhost${path}`, { method, body, headers: body ? { "content-type": "application/json" } : undefined }), service);
 const post = async (body: unknown, service = svc) => {
@@ -35,7 +35,8 @@ test("GeoNames places agree with the tile-based API", async () => {
     const points = rows.map(([lat, lon, cc], i) => ({ id: i, lat: Number(lat), lon: Number(lon), cc }));
     const got: Record<string, string> = {};
     for (let i = 0; i < points.length; i += 1000) Object.assign(got, (await post(points.slice(i, i + 1000))).body);
-    // The polygons are a simplified trace of the tiles; these rows are the known disagreements
+    // Known disagreements: eight from simplifying the trace, the rest are places across a closed border from
+    // the city that used to cover them, which had no answer and now answer a city in their own country
     const different = rows.map((r, i) => (got[i] !== r[3] ? i : -1)).filter((i) => i >= 0);
     assert.deepEqual(different, DIFFERENT_ROWS);
 });
