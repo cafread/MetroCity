@@ -20,12 +20,14 @@ The API and the editor page are deployed at https://metrocity.colin-read.workers
 | `data/cities/<CC>.ndjson` | The record: one city per line, per country. Outline coordinates are integers of 1e-7 degrees |
 | `tools/build.ts` | Turns the data into `public/data/`: `lookup.bin`, `names.json`, `changelog.json`, `cities.json` (TopoJSON), `version.json` |
 | `public/index.html` | The editor |
+| `data/borders.json` | Country borders for the editor, from the U.S. Department of State LSIB lines (a U.S. Government work), thinned to about 100 m by `tools/import_borders.ts`. The build cuts it into one file per degree cell |
 | `public/res/` | GeoNames places over 5,000 people (eight columns of `cities5000.txt`) and state codes, for adding a city |
 | `src/lookup.ts` | Reads `lookup.bin` in place and finds the city containing a point |
 | `src/api.ts`, `src/borders.ts` | The endpoints and country-code rules, independent of any host |
 | `src/worker.ts` | Cloudflare Workers entry |
 | `src/local.ts` | Local server with the same endpoints |
 | `tests/` | Checks against answers recorded from the tile-based service |
+| `validation/` | Checks to run when the outlines change: overlaps, GeoNames places, before-and-after comparison. Not deployed |
 
 There are no dependencies. The code runs unchanged on Deno and on Node 22 or later.
 

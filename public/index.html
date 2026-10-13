@@ -113,7 +113,7 @@
     </div>
 
     <div class="panel">
-      <label><input type="checkbox" id="showCountries" checked> Show country borders</label>
+      <label><input type="checkbox" id="showCountries" checked> Show country borders <span id="borderHint" style="display:none; color:#888">(zoom in)</span></label>
       <label><input type="checkbox" id="editMode"> Edit mode</label>
       <div id="editTools" style="display: none;">
         <div class="caption">Vertex tool</div>
@@ -1367,9 +1367,9 @@
     }));
 
     $('showCountries').addEventListener('change', e => {
-      if (!countriesLayer) return;
       if (e.target.checked) countriesLayer.addTo(map);
       else map.removeLayer(countriesLayer);
+      showBorders();
       cities.forEach((_, id) => restyle(id));
     });
 
@@ -1453,50 +1453,54 @@
     $('exportChangesBtn').addEventListener('click', () => download('metrocity_changes.json', JSON.stringify(buildChangeSet(), null, 1)));
     $('exportTopoBtn').addEventListener('click', () => download('cities_edited.topojson', JSON.stringify(buildTopology())));
 
-    // Country borders as lines, each shared border once. The source polygons are split along
-    // the antimeridian; those artificial edges are dropped so the two halves of Chukotka join.
-    // A border that crosses the map's own cut would draw as a line across the whole map, so
-    // lines are broken there.
-    function borderLines(topo) {
-      const lines = [];
-      const keep = points => {
-        if (points.length < 2) return;
-        const lngs = points.map(c => c[0]), lats = points.map(c => c[1]);
-        lines.push({ points, w: Math.min(...lngs), e: Math.max(...lngs), s: Math.min(...lats), n: Math.max(...lats) });
-      };
-      const onMeridian = c => Math.abs(c[0] - 180) < 1e-6;
-      topojson.mesh(topo, topo.objects.countries).coordinates.forEach(raw => {
-        const line = raw.map(wrapIn);
-        let part = [line[0]];
-        for (let i = 1; i < line.length; i++) {
-          const a = line[i - 1], b = line[i];
-          if (Math.abs(a[0] - b[0]) > 180 || (onMeridian(a) && onMeridian(b))) {
-            keep(part);
-            part = [b];
-          } else {
-            part.push(b);
+    // Country borders are drawn only when zoomed in, from one small file per degree cell,
+    // fetched as the view reaches it. Loaded lines are also what "snap to borders" uses.
+    const BORDER_ZOOM = 8;
+    const borderCells = new Map(); // cell -> its polyline once loaded, or null while loading
+    let borderIndex = null;
+    countriesLayer = L.layerGroup();
+    function loadBorderCell(cell, unit) {
+      borderCells.set(cell, null);
+      fetch(`data/borders/${cell}.json`)
+        .then(res => (res.ok ? res.json() : []))
+        .then(lines => {
+          const cellLines = lines.map(flat => {
+            const points = [];
+            let x = 0, y = 0;
+            for (let i = 0; i < flat.length; i += 2) {
+              x += flat[i]; y += flat[i + 1];
+              points.push(wrapIn([x / unit, y / unit]));
+            }
+            const lngs = points.map(c => c[0]), lats = points.map(c => c[1]);
+            return { points, w: Math.min(...lngs), e: Math.max(...lngs), s: Math.min(...lats), n: Math.max(...lats) };
+          });
+          countryLines.push(...cellLines);
+          const layer = L.polyline(cellLines.map(line => line.points.map(c => [c[1], c[0]])), { weight: 2, opacity: 0.85, color: '#222', interactive: false });
+          borderCells.set(cell, layer);
+          showBorders();
+        })
+        .catch(err => console.error('Failed to load country borders:', err));
+    }
+    function showBorders() {
+      const on = map.hasLayer(countriesLayer) && map.getZoom() >= BORDER_ZOOM;
+      $('borderHint').style.display = map.hasLayer(countriesLayer) && !on ? 'inline' : 'none';
+      if (!on) { countriesLayer.clearLayers(); return; }
+      borderIndex = borderIndex || fetch('data/borders/index.json').then(res => (res.ok ? res.json() : { unit: 1, cells: [] })).then(index => ({ unit: index.unit, cells: new Set(index.cells) }));
+      borderIndex.then(index => {
+        const view = map.getBounds();
+        for (let lng = Math.floor(view.getWest()); lng <= Math.floor(view.getEast()); lng++) {
+          for (let lat = Math.floor(view.getSouth()); lat <= Math.floor(view.getNorth()); lat++) {
+            const cell = `${lng >= 180 ? lng - 360 : lng}_${lat}`;
+            if (!index.cells.has(cell)) continue;
+            if (!borderCells.has(cell)) loadBorderCell(cell, index.unit);
+            else if (borderCells.get(cell) && !countriesLayer.hasLayer(borderCells.get(cell))) countriesLayer.addLayer(borderCells.get(cell));
           }
         }
-        keep(part);
-      });
-      return lines;
+      }).catch(err => console.error('Failed to load country borders:', err));
     }
-
-    // Load country borders from Natural Earth
-    fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-50m.json')
-      .then(res => res.json())
-      .then(topo => {
-        countryLines = borderLines(topo);
-        countriesLayer = L.polyline(countryLines.map(line => line.points.map(c => [c[1], c[0]])), {
-          weight: 3,
-          opacity: 0.8,
-          color: '#333',
-          interactive: false // Don't interfere with city clicks
-        });
-        if ($('showCountries').checked) countriesLayer.addTo(map);
-        cities.forEach((_, id) => restyle(id));
-      })
-      .catch(err => console.error('Failed to load country borders:', err));
+    if ($('showCountries').checked) countriesLayer.addTo(map);
+    map.on('moveend', showBorders);
+    showBorders();
 
     // Load TopoJSON and convert to GeoJSON for Leaflet
     fetch(DATA_URL)

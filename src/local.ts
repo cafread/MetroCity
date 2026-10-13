@@ -19,12 +19,15 @@ const service: Service = {
 
 Deno.serve({ port: Number(Deno.env.get("PORT") ?? 3000), hostname: Deno.env.get("HOST") ?? "127.0.0.1" }, async (request) => {
     const url = new URL(request.url);
-    const path = url.pathname === "/changelog" ? "/data/changelog.json" : url.pathname === "/" ? "/index.html" : url.pathname;
-    const res = url.pathname === "/changelog" ? null : await route(request, service);
+    const readOnly = request.method === "GET" || request.method === "HEAD";
+    const path = url.pathname === "/changelog" && readOnly ? "/data/changelog.json" : url.pathname === "/" ? "/index.html" : url.pathname;
+    const res = path === "/data/changelog.json" ? null : await route(request, service);
     if (res) return res;
-    if (path.includes("..")) return new Response("Not found", { status: 404 });
     try {
-        return new Response(await read(path.slice(1)), { headers: { "content-type": types[path.split(".").pop() ?? ""] ?? "application/octet-stream" } });
+        const name = decodeURIComponent(path.slice(1));
+        const target = new URL("./" + name, dir);
+        if (!/^[\w.-]+(\/[\w.-]+)*$/.test(name) || name.includes("..") || !target.href.startsWith(dir.href)) throw new Error("outside public");
+        return new Response(await Deno.readFile(target), { headers: { "content-type": types[path.split(".").pop() ?? ""] ?? "application/octet-stream" } });
     } catch {
         return new Response("Not found", { status: 404 });
     }
