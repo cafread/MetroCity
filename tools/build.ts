@@ -195,6 +195,30 @@ const out = join(root, "public/data");
 await mkdir(out, { recursive: true });
 await writeFile(join(out, "cities.json"), JSON.stringify(topology));
 await writeFile(join(out, "version.json"), JSON.stringify({ version: changelog.version }));
+
+// Country borders for the editor, one small file per degree cell so the page loads only what is in view
+const borders = JSON.parse(await readFile(join(root, "data/borders.json"), "utf8")) as { unit: number; lines: number[][] };
+const cells = new Map<string, number[][]>();
+for (const line of borders.lines) {
+    let x = 0, y = 0, cell = "", piece: number[] = [];
+    for (let j = 0; j < line.length; j += 2) {
+        const px = x, py = y;
+        x += line[j]; y += line[j + 1];
+        if (j === 0) continue;
+        const here = `${Math.floor((px + x) / 2 / borders.unit)}_${Math.floor((py + y) / 2 / borders.unit)}`;
+        if (here !== cell) {
+            if (piece.length) cells.get(cell)!.push(piece);
+            cell = here;
+            piece = [px, py];
+            if (!cells.has(cell)) cells.set(cell, []);
+        }
+        piece.push(x - px, y - py);
+    }
+    if (piece.length) cells.get(cell)!.push(piece);
+}
+await mkdir(join(out, "borders"), { recursive: true });
+for (const [cell, lines] of cells) await writeFile(join(out, "borders", `${cell}.json`), JSON.stringify(lines));
+await writeFile(join(out, "borders/index.json"), JSON.stringify({ unit: borders.unit, cells: [...cells.keys()].sort() }));
 await writeFile(join(out, "lookup.bin"), lookup);
 await writeFile(join(out, "names.json"), JSON.stringify(names));
 await writeFile(join(out, "changelog.json"), JSON.stringify(changelog));
