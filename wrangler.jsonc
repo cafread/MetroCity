@@ -6,6 +6,7 @@
     "preview_urls": true,
     "assets": { "directory": "./public", "binding": "ASSETS" },
     "build": { "command": "node tools/build.ts" },
-    "vars": { "REQ_LIMIT": "1000" },
+    // The editor's routes answer only on EDIT_HOST. GITHUB_TOKEN, GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are secrets, set in the dashboard.
+    "vars": { "REQ_LIMIT": "1000", "EDIT_HOST": "metrocity.colin-read.workers.dev", "EDIT_REPO": "cafread/MetroCity", "EDIT_BRANCH": "main", "EDITORS": "cafread" },
     "previews": { "vars": { "REQ_LIMIT": "1000" } }
 }

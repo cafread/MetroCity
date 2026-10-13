@@ -73,6 +73,8 @@
     .tag.new { background: #c8e6c9; color: #1b5e20; }
     .tag.deleted { background: #ffcdd2; color: #b71c1c; }
     .tag.pushed { background: #bbdefb; color: #0d47a1; }
+    #busy { position: fixed; inset: 0; z-index: 3000; display: none; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.6); cursor: wait; font-size: 18px; }
+    #deployNote { display: none; background: #e3f2fd; }
     .note { font-size: 11px; color: #2e7d32; margin: 0 0 6px 0; }
     #changeList, #committedList { max-height: 150px; overflow-y: auto; margin-top: 6px; }
     #loading {
@@ -93,6 +95,7 @@
 </head>
 <body>
   <div id="loading">Loading city polygons...</div>
+  <div id="busy">Pushing...</div>
   <div id="map"></div>
   <div id="sidebar">
     <h2 style="margin-top:0">City Editor</h2>
@@ -147,6 +150,10 @@
         </div>
       </div>
       <div id="status" style="margin-top: 8px;"></div>
+    </div>
+
+    <div class="panel" id="deployNote">
+      Newer data has been published. <button id="reloadBtn" class="small">Reload</button>
     </div>
 
     <!-- The selected city sits above the lists that grow and shrink, so its buttons stay put -->
@@ -226,8 +233,13 @@
     // shared by neighbouring cities is simply an identical coordinate in each of their rings.
     const cities = new Map();      // city id -> Leaflet polygon layer (layer.feature is the GeoJSON feature)
     const baseline = new Map();   // city id -> snapshot its edits are measured from: as loaded, or as last committed (null = no city); touched cities only
-    const committed = new Map();   // city id -> { file, state, by, at, pushed }: the accepted snapshot and the file's snapshot it replaces
-    let user = 'anon';             // mock login: a name kept in the browser, no password
+    const committed = new Map();   // city id -> { file, state, by, at, push }: the accepted snapshot, the published snapshot it replaces, and { commit, by, at } once pushed
+    let dataVersion = '';          // version of the published data this page loaded
+    let newVersion = '';           // a later version seen since: a deploy has landed
+    let pushing = false;
+    let readOnly = false;          // another tab holds the saved edits
+    let user = 'anon';             // the signed-in GitHub login; on a server without sign-in, a name typed in and kept in the browser
+    let signIn = false;            // the server has GitHub sign-in
     let undoStack = [];            // operations: { label, before: {id: snapshot|null}, after: {id: snapshot|null} }
     let redoStack = [];
     let geojsonLayer = null;
@@ -369,7 +381,9 @@
 
     // Two snapshots describe the same city state. Compared field by field: the order of keys
     // and a centre that is missing in older saved edits must not make a city look changed.
-    const stateKey = snap => (snap ? JSON.stringify([snap.name, snap.population, snap.lat ?? null, snap.lon ?? null, snap.coordinates]) : 'none');
+    // Coordinates are compared at the files' precision, so a city read back after a deploy matches.
+    const fileUnit = v => Math.round(v * 1e7);
+    const stateKey = snap => (snap ? JSON.stringify([snap.name, snap.population, snap.lat ?? null, snap.lon ?? null, snap.coordinates.map(ring => ring.map(c => [fileUnit(c[0]), fileUnit(c[1])]))]) : 'none');
     const sameState = (a, b) => stateKey(a) === stateKey(b);
 
     function capture(ids) {
@@ -430,7 +444,7 @@
     }
 
     function undo() {
-      const op = undoStack.pop();
+      const op = pushing ? null : undoStack.pop();
       if (!op) return;
       Object.keys(op.before).forEach(key => applySnapshot(Number(key), op.before[key]));
       reselect(op);
@@ -440,7 +454,7 @@
     }
 
     function redo() {
-      const op = redoStack.pop();
+      const op = pushing ? null : redoStack.pop();
       if (!op) return;
       Object.keys(op.after).forEach(key => applySnapshot(Number(key), op.after[key]));
       reselect(op);
@@ -496,23 +510,37 @@
       const file = committed.has(id) ? committed.get(id).file : baseline.get(id);
       const state = snapshot(id);
       if (sameState(state, file)) committed.delete(id); // back to what the file has
-      else committed.set(id, { file, state, by: user, at: new Date().toISOString(), pushed: null });
+      else committed.set(id, { file, state, by: user, at: new Date().toISOString(), push: null });
       baseline.set(id, state);
       return true;
     }
 
-    function commitCities(ids) {
-      const names = ids.map(id => [id, cityName(id)]).filter(([id]) => commitCity(id)).map(pair => pair[1]);
-      if (names.length === 0) return;
-      const label = names.length === 1 ? `Committed ${names[0]}` : `Committed ${names.length} cities`;
-      devLog('op', label, { user });
-      afterChange(label);
+    // Why a city cannot be committed as it stands, or ''
+    function commitBlock(id, nameCount) {
+      if (committed.has(id) && committed.get(id).push) return 'is awaiting deploy; commit it again once that is live';
+      const layer = cities.get(id);
+      return layer && nameCount.get(layer.feature.properties.name) > 1 ? 'has the name of another city' : '';
     }
 
-    // Take a commit back: the city is measured from the file again, so it returns to pending
+    function commitCities(ids) {
+      const nameCount = new Map();
+      cities.forEach(layer => nameCount.set(layer.feature.properties.name, (nameCount.get(layer.feature.properties.name) || 0) + 1));
+      const blocked = ids.filter(id => commitBlock(id, nameCount));
+      const refusal = blocked.length ? `Not committed: ${cityName(blocked[0])} ${commitBlock(blocked[0], nameCount)}` + (blocked.length > 1 ? `, and ${blocked.length - 1} more` : '') : '';
+      const names = ids.filter(id => !blocked.includes(id)).map(id => [id, cityName(id)]).filter(([id]) => commitCity(id)).map(pair => pair[1]);
+      if (names.length) {
+        const label = names.length === 1 ? `Committed ${names[0]}` : `Committed ${names.length} cities`;
+        devLog('op', label, { user });
+        afterChange(label);
+      }
+      if (refusal) setStatus(refusal, true);
+    }
+
+    // Take a commit back: the city is measured from the file again, so it returns to pending.
+    // Not once pushed: the push cannot be taken back from here.
     function uncommitCity(id) {
       const entry = committed.get(id);
-      if (!entry) return;
+      if (!entry || entry.push) return;
       const label = `Uncommitted ${cityName(id)}`;
       baseline.set(id, entry.file);
       committed.delete(id);
@@ -520,7 +548,7 @@
       afterChange(label);
     }
 
-    const unpushedIds = () => Array.from(committed.keys()).filter(id => !committed.get(id).pushed);
+    const unpushedIds = () => Array.from(committed.keys()).filter(id => !committed.get(id).push);
 
     function changeEntry(id, file, now, extra) {
       if (!now) return { action: 'delete', id, name: file.name, ...extra };
@@ -536,32 +564,58 @@
       };
     }
 
-    // Push sends the committed changes to the remote. The remote is mocked by dev_server.ts
-    // (POST /dev/push), which requires a logged-in user and keeps what it receives.
+    // Push sends the unpushed commits to the server (POST /edit/push), which writes them to the
+    // published data as one change or refuses them all. Each goes with the published city it was
+    // made from, and the server refuses the push when any of those has changed since. The page is
+    // locked while the request is out. A pushed commit is settled by the load that follows its deploy.
     async function push() {
       const entries = unpushedIds().map(id => [id, committed.get(id)]);
-      if (user === 'anon' || entries.length === 0) return;
-      const pushedAt = new Date().toISOString();
-      const body = {
-        user,
-        pushedAt,
-        base: DATA_URL,
-        changes: entries.map(([id, entry]) => changeEntry(id, entry.file, entry.state, { committedBy: entry.by, committedAt: entry.at }))
-      };
-      setStatus('Pushing...');
+      if (user === 'anon' || entries.length === 0 || pushing || readOnly) return;
+      const toFile = snap => snap && { name: snap.name, population: snap.population, lat: snap.lat, lon: snap.lon, coordinates: wrapRings(snap.coordinates, wrapOut) };
+      const count = `${entries.length} ${entries.length === 1 ? 'commit' : 'commits'}`;
+      pushing = true;
+      $('busy').style.display = 'flex';
       try {
-        const res = await fetch('/dev/push', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const reply = await res.json();
-        // A city committed again while the request was in flight stays unpushed
-        entries.forEach(([id, entry]) => { if (committed.get(id) === entry) entry.pushed = { by: user, at: pushedAt }; });
-        devLog('op', `Pushed ${reply.accepted} changes`, { user });
-        afterChange(`Pushed ${reply.accepted} ${reply.accepted === 1 ? 'change' : 'changes'} to the remote as ${user}`);
+        const res = await fetch('/edit/push', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user, changes: entries.map(([id, entry]) => ({ id, file: toFile(entry.file), state: toFile(entry.state) })) }) });
+        const reply = await res.json().catch(() => ({}));
+        if (res.status === 409) {
+          $('deployNote').style.display = 'block';
+          setStatus('Push refused: the published data has changed under these commits. Reload to pick it up; commits made on the old data are dropped', true);
+        } else if (!res.ok) {
+          throw new Error(Array.isArray(reply.problems) ? reply.problems.join('; ') : res.status === 501 ? 'this server does not accept pushes' : `HTTP ${res.status}`);
+        } else {
+          const at = new Date().toISOString();
+          entries.forEach(([, entry]) => { entry.push = { commit: reply.commit, by: user, at }; });
+          devLog('op', `Pushed ${count}`, { user, commit: reply.commit });
+          afterChange(`Pushed ${count} as ${user}; awaiting deploy`);
+          checkVersion();
+        }
       } catch (err) {
         console.error('Push failed:', err);
         setStatus('Push failed: ' + err.message, true);
+      } finally {
+        pushing = false;
+        $('busy').style.display = 'none';
       }
     }
+
+    // The published data's version names the commit it was built from, so a change means a deploy
+    // has landed. Nothing is merged in place: the reload replays the saved edits against the new data.
+    function checkVersion() {
+      return fetch('data/version.json', { cache: 'no-store' })
+        .then(res => (res.ok ? res.json() : null))
+        .then(v => {
+          if (!v || !v.version) return;
+          if (!dataVersion) dataVersion = v.version;
+          else if (v.version !== dataVersion && v.version !== newVersion) {
+            newVersion = v.version;
+            $('deployNote').style.display = 'block';
+          }
+        })
+        .catch(() => { /* asked again at the next interval */ });
+    }
+    setInterval(() => { if (!newVersion && Array.from(committed.values()).some(entry => entry.push)) checkVersion(); }, 15000);
+    window.addEventListener('focus', () => { if (dataVersion && !newVersion) checkVersion(); });
 
     function setUser(name) {
       user = name || 'anon';
@@ -599,6 +653,7 @@
     // Edits are kept in the browser between visits. Each changed city is stored with the
     // state it was loaded in, so revert still works after a reload.
     function save() {
+      if (readOnly) return;
       const changes = {};
       dirtyIds().forEach(id => { changes[id] = { original: baseline.get(id), current: snapshot(id) }; });
       const commits = {};
@@ -631,27 +686,41 @@
         }
         return snap;
       };
-      // Committed states first, then the pending edits made on top of them
+      // Each saved city is checked against the published data just loaded, which may be newer than
+      // the data the edit was made on. An edit is replayed only onto the exact city it was made from;
+      // anything else is dropped, since losing a tweak is cheaper than publishing a stale outline.
+      // Committed states first, then the pending edits on top of them.
       const commits = saved.committed || {};
+      const changes = saved.changes || {};
+      const published = new Map();
+      Object.keys({ ...commits, ...changes }).forEach(key => published.set(Number(key), snapshot(Number(key))));
+      let live = 0, dropped = 0;
       Object.keys(commits).forEach(key => {
         const id = Number(key);
-        const entry = { ...commits[key], file: toMap(commits[key].file, id), state: toMap(commits[key].state, id) };
+        const entry = { file: toMap(commits[key].file, id), state: toMap(commits[key].state, id), by: commits[key].by, at: commits[key].at, push: commits[key].push || null };
+        if (sameState(published.get(id), entry.state)) { live++; return; }
+        if (!sameState(published.get(id), entry.file)) { dropped++; return; }
         committed.set(id, entry);
         baseline.set(id, entry.state);
         applySnapshot(id, entry.state);
       });
-      const changes = saved.changes || {};
+      let pending = 0;
       Object.keys(changes).forEach(key => {
         const id = Number(key);
-        const original = toMap(changes[key].original, id);
+        const original = toMap(changes[key].original, id), current = toMap(changes[key].current, id);
+        const base = committed.has(id) ? committed.get(id).state : published.get(id);
+        if (!sameState(base, original)) { dropped++; return; }
         baseline.set(id, original);
-        applySnapshot(id, toMap(changes[key].current, id));
+        pending++;
+        applySnapshot(id, current);
       });
-      const pending = Object.keys(changes).length;
-      if (pending || committed.size) setStatus(`Restored ${pending} pending and ${committed.size} committed ${pending + committed.size === 1 ? 'city' : 'cities'} saved in this browser`);
+      const parts = [];
+      if (pending || committed.size) parts.push(`Restored ${pending} pending and ${committed.size} committed ${pending + committed.size === 1 ? 'city' : 'cities'} saved in this browser`);
+      if (live) parts.push(`${live} ${live === 1 ? 'commit is' : 'commits are'} now live`);
+      if (dropped) parts.push(`${dropped} saved ${dropped === 1 ? 'edit was' : 'edits were'} dropped: the published data changed under ${dropped === 1 ? 'it' : 'them'}`);
+      if (parts.length) setStatus(parts.join('. '), dropped > 0);
     }
 
-    // Geometry helpers
     function boundsMiss(layer, box) {
       const b = layer.getBounds();
       return b.getWest() > box.e || b.getEast() < box.w || b.getSouth() > box.n || b.getNorth() < box.s;
@@ -1225,7 +1294,7 @@
       $('cityFacts').innerHTML = facts;
       const dirty = baseline.has(id) && isDirty(id);
       const entry = committed.get(id);
-      $('committedNote').textContent = entry ? `Committed by ${entry.by}, ${entry.pushed ? 'pushed by ' + entry.pushed.by : 'not pushed'}` : '';
+      $('committedNote').textContent = entry ? `Committed by ${entry.by}, ${entry.push ? 'pushed by ' + entry.push.by + ', awaiting deploy' : 'not pushed'}` : '';
       // Not the disabled attribute: a browser drops the click on a button that was disabled at
       // mouse-down, which is the moment a rename is still being applied
       $('commitCityBtn').classList.toggle('inactive', !dirty);
@@ -1250,7 +1319,7 @@
     }
 
     function listItem(id, name, kind, actions, title) {
-      const tagClass = ['new', 'deleted', 'pushed'].includes(kind) ? kind : '';
+      const tagClass = { new: 'new', deleted: 'deleted', 'awaiting deploy': 'pushed' }[kind] || '';
       const buttons = actions.map(a => `<button class="small" data-act="${a.toLowerCase()}">${a}</button>`).join('');
       return `<div class="change-item" data-id="${id}"><span class="name" title="${esc(title || name)}">${esc(name)}</span><span class="tag ${tagClass}">${kind}</span>${buttons}</div>`;
     }
@@ -1266,13 +1335,13 @@
       $('committedList').innerHTML = Array.from(committed, ([id, entry]) => listItem(
         id,
         (entry.state || entry.file).name,
-        entry.pushed ? 'pushed' : changeKind(entry.file, entry.state),
-        ['Uncommit'],
-        `Committed by ${entry.by} at ${entry.at}` + (entry.pushed ? `, pushed by ${entry.pushed.by} at ${entry.pushed.at}` : '')
+        entry.push ? 'awaiting deploy' : changeKind(entry.file, entry.state),
+        entry.push ? [] : ['Uncommit'],
+        `Committed by ${entry.by} at ${entry.at}` + (entry.push ? `, pushed by ${entry.push.by} at ${entry.push.at} as ${entry.push.commit}` : '')
       )).join('');
       $('pushBtn').textContent = unpushed.length ? `Push (${unpushed.length})` : 'Push';
-      $('pushBtn').disabled = user === 'anon' || unpushed.length === 0;
-      $('pushBtn').title = user === 'anon' ? 'Log in to push committed changes to the remote' : 'Send committed changes to the remote';
+      $('pushBtn').disabled = user === 'anon' || unpushed.length === 0 || readOnly;
+      $('pushBtn').title = user === 'anon' ? 'Log in to push the commits' : 'Publish the commits';
     }
 
     function onChangeListClick(e) {
@@ -1379,6 +1448,8 @@
     $('commitAllBtn').addEventListener('click', () => commitCities(dirtyIds()));
     $('pushBtn').addEventListener('click', push);
     $('loginBtn').addEventListener('click', () => {
+      if (signIn && user === 'anon') { location.href = '/edit/login'; return; }
+      if (signIn) { fetch('/edit/logout', { method: 'POST' }).then(() => setUser('anon')); return; }
       if (user !== 'anon') { setUser('anon'); return; }
       $('loginForm').style.display = 'block';
       $('loginName').focus();
@@ -1502,8 +1573,21 @@
     map.on('moveend', showBorders);
     showBorders();
 
+    // One tab at a time holds the saved edits: a second would overwrite them with its own copy
+    const holdsEdits = !navigator.locks ? Promise.resolve(true) : new Promise(resolve => {
+      navigator.locks.request('metrocity:' + STORAGE_KEY, { ifAvailable: true }, lock => {
+        resolve(Boolean(lock));
+        return lock ? new Promise(() => {}) : undefined; // held until the tab closes
+      });
+    });
+    $('reloadBtn').addEventListener('click', () => location.reload());
+
     // Load TopoJSON and convert to GeoJSON for Leaflet
-    fetch(DATA_URL)
+    Promise.all([holdsEdits, checkVersion()])
+      .then(([holds]) => {
+        readOnly = !holds;
+        return fetch(DATA_URL, { cache: 'no-cache' });
+      })
       .then(res => {
         if (!res.ok) throw new Error(`${DATA_URL}: HTTP ${res.status}`);
         return res.json();
@@ -1519,9 +1603,13 @@
         geojsonLayer = L.geoJSON(data, { style: styleFor, onEachFeature: onEachFeature }).addTo(map);
         restoreSaved();
         $('loading').style.display = 'none';
-        const restored = $('status').textContent;
+        const restored = $('status').textContent, warn = $('status').className === 'warn';
         afterChange();
-        if (restored) setStatus(restored);
+        if (restored) setStatus(restored, warn);
+        if (readOnly) {
+          $('editMode').disabled = true;
+          setStatus('The editor is open in another tab, which holds the saved edits. This tab is read-only', true);
+        }
         renderResults('');
         devLog('info', `Loaded ${cities.size} cities from ${DATA_URL}`);
       })
@@ -1532,6 +1620,16 @@
 
     try { user = localStorage.getItem(USER_KEY) || 'anon'; } catch (_) { /* stay anon */ }
     renderUser();
+    fetch('/edit/me', { cache: 'no-store' })
+      .then(res => (res.ok ? res.json() : null))
+      .then(me => {
+        if (!me) return;
+        signIn = true;
+        user = me.user || 'anon';
+        renderUser();
+        renderChanges();
+      })
+      .catch(() => { /* no sign-in here: the typed name stands */ });
     showInfo();
   </script>
 </body>
