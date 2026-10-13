@@ -588,6 +588,7 @@
           entries.forEach(([, entry]) => { entry.push = { commit: reply.commit, by: user, at }; });
           devLog('op', `Pushed ${count}`, { user, commit: reply.commit });
           afterChange(`Pushed ${count} as ${user}; awaiting deploy`);
+          if (reply.build && reply.build !== 'requested') setStatus(`Pushed ${count} as ${user}, but the build was ${reply.build}: it goes live with the next build of the published data`, true);
           checkVersion();
         }
       } catch (err) {

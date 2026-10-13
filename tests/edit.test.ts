@@ -12,10 +12,11 @@ const alpha = { name: "Alpha, AA", population: 1000, lat: 10.5, lon: 0.5, coordi
 const line = JSON.stringify({ i: 1, n: alpha.name, p: 1000, la: 10.5, lo: 0.5, t: 5, g: square(0)[0].slice(0, -1).flatMap(([lon, lat]) => [lon * 1e7, lat * 1e7]) });
 
 function github(login = "alice") {
-    const state = { head: "c1", files: { AA: line + "\n" } as Record<string, string | null>, commits: [] as Record<string, any>[], pending: {} as Record<string, string | null> };
+    const state = { builds: 0, head: "c1",files: { AA: line + "\n" } as Record<string, string | null>, commits: [] as Record<string, any>[], pending: {} as Record<string, string | null> };
     const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
         const url = String(input), body = init?.body ? JSON.parse(String(init.body)) : null;
         const reply = (data: unknown, status = 200) => new Response(typeof data === "string" ? data : JSON.stringify(data), { status });
+        if (url === "https://hook.test/build") { state.builds++; return reply({}); }
         if (url.endsWith("/login/oauth/access_token")) return reply({ access_token: body.code === "good" ? "user-token" : undefined });
         if (url === "https://api.github.com/user") return reply({ login });
         assert.equal((init?.headers as Record<string, string>).authorization, "Bearer t");
@@ -74,11 +75,19 @@ test("a push writes one commit on top of the commit the data was built from", as
     const gh = github();
     const cookie = sessionOf(await signIn(gh));
     const res = await call(gh, "POST", "/edit/push", { cookie, origin: `https://${host}`, body: moved });
-    assert.deepEqual([res.status, await res.json()], [200, { commit: "c2" }]);
+    assert.deepEqual([res.status, await res.json()], [200, { commit: "c2", build: "not requested" }]);
     assert.equal(JSON.parse(gh.state.files.AA!).p, 2000);
     assert.deepEqual([gh.state.commits[0].parents, gh.state.commits[0].author.name], [["c1"], "alice"]);
     // the branch has moved past what this Worker was built from, so the next push waits for the deploy
     assert.equal((await call(gh, "POST", "/edit/push", { cookie, origin: `https://${host}`, body: moved })).status, 503);
     assert.equal((await call(gh, "POST", "/edit/push", { cookie, origin: `https://${host}`, body: moved, version: "c2" })).status, 409);
     assert.equal(gh.state.commits.length, 1);
+});
+
+test("with a deploy hook set, a push asks for a build", async () => {
+    const gh = github();
+    const cookie = sessionOf(await signIn(gh));
+    const request = new Request(`https://${host}/edit/push`, { method: "POST", headers: { cookie, origin: `https://${host}` }, body: JSON.stringify(moved) });
+    const res = (await edit(request, { ...env, DEPLOY_HOOK: "https://hook.test/build" }, { version: "c1", names: { 1: alpha.name }, fetch: gh.fetch }))!;
+    assert.deepEqual([await res.json(), gh.state.builds], [{ commit: "c2", build: "requested" }, 1]);
 });

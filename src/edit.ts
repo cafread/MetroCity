@@ -13,6 +13,7 @@ export type EditEnv = {
     GITHUB_TOKEN?: string;         // writes to the repo
     GITHUB_CLIENT_ID?: string;     // the OAuth app used for sign-in
     GITHUB_CLIENT_SECRET?: string;
+    DEPLOY_HOOK?: string;          // optional: a URL that starts a build of the branch when posted to
 };
 // version is the commit the running data was built from; names is its id -> name. fetch is replaced in tests.
 export type EditContext = { version: string; names: Record<string, string>; fetch?: typeof fetch };
@@ -80,7 +81,10 @@ async function push(request: Request, user: string, env: EditEnv, ctx: EditConte
         if (result.status !== 200) return Response.json(result, { status: result.status });
         const count = (body!.changes as unknown[]).length;
         const commit = await commitCities(repo, at, result.files, `Editor push by ${user}: ${count} ${count === 1 ? "city" : "cities"}`, { name: user, email: `${user}@users.noreply.github.com` });
-        return commit ? Response.json({ commit }) : refuse(503, "the published data moved during the push; nothing was written, push again");
+        if (!commit) return refuse(503, "the published data moved during the push; nothing was written, push again");
+        // A commit written through the API did not start a build by itself, so ask for one
+        const build = env.DEPLOY_HOOK ? await (ctx.fetch ?? fetch)(env.DEPLOY_HOOK, { method: "POST" }).then((res) => (res.ok ? "requested" : `refused, HTTP ${res.status}`), () => "could not be requested") : "not requested";
+        return Response.json({ commit, build });
     } catch (err) {
         return refuse(502, (err as Error).message);
     }
