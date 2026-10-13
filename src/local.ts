@@ -23,7 +23,7 @@ async function load() {
 await load();
 
 const cityFile = (cc: string) => new URL(`data/cities/${cc}.ndjson`, root);
-const readCities = (cc: string) => Deno.readTextFile(cityFile(cc)).catch(() => null);
+const readCities = (cc: string) => Deno.readTextFile(cityFile(cc)).catch((err) => { if (err instanceof Deno.errors.NotFound) return null; throw err; });
 async function writeCities(files: Record<string, string | null>) {
     for (const [cc, text] of Object.entries(files)) {
         if (text === null) await Deno.remove(cityFile(cc)).catch(() => {});
@@ -34,23 +34,31 @@ const build = (version: string) => new Deno.Command(Deno.execPath(), { args: ["r
 
 let busy = false;
 async function push(request: Request): Promise<Response> {
-    if (busy) return Response.json({ problems: ["another push is in progress"] }, { status: 503 });
+    const refuse = (status: number, ...problems: string[]) => Response.json({ problems }, { status });
+    // Only this page, on this machine: any other site open in the browser could post here too
+    const url = new URL(request.url);
+    if (!["127.0.0.1", "localhost"].includes(url.hostname) || request.headers.get("origin") !== url.origin) return refuse(403, "pushes are accepted from this server's own page only");
+    if (busy) return refuse(503, "another push is in progress");
     busy = true;
+    let before: Record<string, string | null> | null = null;
     try {
-        const body = await readJson(request, 32_000_000) as { changes?: unknown } | null;
-        const result = await applyChanges(body?.changes, service.names, readCities, Date.now());
+        let body: { changes?: unknown } | null;
+        try { body = await readJson(request, 2_000_000) as { changes?: unknown } | null; } catch { return refuse(400, "the request could not be read"); }
+        const result = await applyChanges(body?.changes, { names: service.names, near: service.lookup.near, read: readCities }, Date.now());
         if (result.status !== 200) return Response.json(result, { status: result.status });
-        const before: Record<string, string | null> = {};
-        for (const cc of Object.keys(result.files)) before[cc] = await readCities(cc);
+        const saved: Record<string, string | null> = {};
+        for (const cc of Object.keys(result.files)) saved[cc] = await readCities(cc);
+        before = saved;
         await writeCities(result.files);
         const built = await build(`local-${Date.now()}`);
-        if (!built.success) {
-            await writeCities(before);
-            return Response.json({ problems: new TextDecoder().decode(built.stderr).trim().split("\n").slice(0, 5) }, { status: 422 });
-        }
-        return Response.json({ commit: await load() });
-    } catch {
-        return Response.json({ problems: ["the request could not be read"] }, { status: 400 });
+        if (!built.success) throw new Error(new TextDecoder().decode(built.stderr).trim().split("\n").slice(0, 5).join("; "));
+        const commit = await load();
+        before = null;
+        return Response.json({ commit });
+    } catch (err) {
+        // Whatever failed after the files were written, put them back and rebuild from them
+        if (before) { await writeCities(before); await build("dev").catch(() => {}); await load().catch(() => {}); }
+        return refuse(before ? 422 : 502, (err as Error).message);
     } finally {
         busy = false;
     }

@@ -42,7 +42,9 @@ export async function commitCities(repo: Repo, parent: string, files: Record<str
     const tree = (await json(await api(repo, "git/trees", { method: "POST", body: JSON.stringify({ base_tree: base, tree: entries }) }), "tree")).sha;
     const commit = (await json(await api(repo, "git/commits", { method: "POST", body: JSON.stringify({ message, tree, parents: [parent], author }) }), "new commit")).sha;
     const moved = await api(repo, `git/refs/heads/${repo.branch}`, { method: "PATCH", body: JSON.stringify({ sha: commit, force: false }) });
-    if (moved.status === 422) return "";
-    await json(moved, "branch update");
-    return commit;
+    if (moved.ok) return commit;
+    // 422 covers a branch that has moved on, and also anything else GitHub would not accept
+    const why = moved.status === 422 ? String((await moved.json().catch(() => ({}))).message ?? "") : "";
+    if (/fast.forward/i.test(why)) return "";
+    throw new Error(`GitHub branch update: HTTP ${moved.status}${why ? `, ${why}` : ""}`);
 }

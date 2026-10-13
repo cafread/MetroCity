@@ -19,8 +19,9 @@ export default {
         try {
             const url = new URL(request.url);
             const read = request.method === "GET" || request.method === "HEAD";
+            if (url.protocol === "http:" && read) return Response.redirect(`https://${url.host}${url.pathname}${url.search}`, 301);
             if (url.pathname === "/changelog" && read) return env.ASSETS.fetch(new Request(url.origin + "/data/changelog.json", request));
-            const edited = await edit(request, env, { version: meta.version, names });
+            const edited = await edit(request, env, { version: meta.version, names, near: lookup.near });
             if (edited) return edited;
             started ||= Date.now();
             const limit = Number(env.REQ_LIMIT);

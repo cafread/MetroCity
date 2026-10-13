@@ -9,16 +9,14 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type City, cityProblem, MAX_CITIES } from "../src/cities.ts";
+import { type City, cityProblem, MAX_CITIES, MIN_CITIES } from "../src/cities.ts";
+import { bbox, overlaps } from "../src/geom.ts";
 import { MAGIC, ROOT, ROOT_SIZE, SCALE } from "../src/lookup.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_DEPTH = 10;
 const MIN_DEPTH = 8;
 const SMALL_LEAF = 2;
-
-// A build with fewer cities than this is taken to be a mistake, such as an emptied file
-const MIN_CITIES = 3000;
 
 const cities: City[] = [];
 const problems: string[] = [];
@@ -43,6 +41,15 @@ for (const file of (await readdir(join(root, "data/cities"))).sort()) {
     });
 }
 if (cities.length < MIN_CITIES || cities.length > MAX_CITIES) problems.push(`${cities.length} valid cities; expected ${MIN_CITIES} to ${MAX_CITIES}`);
+// No two outlines may share area: the lookup would then answer by the order of the cities
+const boxes = cities.map((c) => bbox(c.g));
+for (let a = 0; a < cities.length && problems.length === 0; a++) {
+    for (let b = a + 1; b < cities.length; b++) {
+        const A = boxes[a], B = boxes[b];
+        if (A[2] < B[0] || B[2] < A[0] || A[3] < B[1] || B[3] < A[1]) continue;
+        if (overlaps(cities[a].g, cities[b].g)) problems.push(`"${cities[a].n}" and "${cities[b].n}" overlap`);
+    }
+}
 if (problems.length) {
     console.error(problems.slice(0, 50).join("\n"));
     console.error(`${problems.length} problem(s) in the data; nothing was built`);
