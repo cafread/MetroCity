@@ -17,7 +17,7 @@ const svc: Service = {
     version: "test",
     started: Date.now(),
 };
-const DIFFERENT_ROWS = [184, 366, 547, 858, 1076, 1201, 1749, 1810];
+const DIFFERENT_ROWS = [184, 366, 547, 858, 1076, 1201, 1438, 1749, 1810];
 const call = (method: string, path: string, body?: string, service = svc) =>
     route(new Request(`http://localhost${path}`, { method, body, headers: body ? { "content-type": "application/json" } : undefined }), service);
 const post = async (body: unknown, service = svc) => {
@@ -80,6 +80,8 @@ test("country code rules", () => {
     assert.equal(validateBorder("MX", "US", "San Diego, (CA), US"), "Tijuana, MX");
     assert.equal(validateBorder("US", "CA", "Windsor, (ON), CA"), "Detroit, (MI), US");
     assert.equal(validateBorder("CN", "HK", "Hong Kong, HK"), "Shenzhen, (GD), CN");
+    assert.equal(validateBorder("CG", "CD", "Kinshasa, CD"), "Brazzaville, CG");
+    assert.equal(validateBorder("CD", "CG", "Brazzaville, CG"), "Kinshasa, CD");
 });
 
 test("city records", () => {

@@ -57,6 +57,7 @@ export function validateBorder(cc: string, cityCc: string, city: string): string
     if (cc === cityCc) return city;
     if (openBorders[cc]?.includes(cityCc)) return city;
     if (cc === "CG" && city === "Kinshasa, CD") return "Brazzaville, CG";
+    if (cc === "CD" && city === "Brazzaville, CG") return "Kinshasa, CD";
     if (cc === "MX" && city === "San Diego, (CA), US") return "Tijuana, MX";
     if (cc === "US" && city === "Juarez, MX") return "El Paso, (TX), US";
     if (cc === "US" && city === "Hamilton, (ON), CA") return "Buffalo, (NY), US";
