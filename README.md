@@ -27,6 +27,7 @@ The API and the editor page are deployed at https://metrocity.colin-read.workers
 | `src/worker.ts` | Cloudflare Workers entry |
 | `src/local.ts` | Local server with the same endpoints |
 | `tests/` | Checks against answers recorded from the tile-based service |
+| `validation/` | Checks to run when the outlines change: overlaps, GeoNames places, before-and-after comparison. Not deployed |
 
 There are no dependencies. The code runs unchanged on Deno and on Node 22 or later.
 
