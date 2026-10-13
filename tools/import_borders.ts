@@ -29,8 +29,24 @@ const thin = (pts: number[][]): number[][] => {
     return pts.filter((_, k) => keep[k]);
 };
 
+// Enclaves of a few square km (Baarle, the Vatican) and stub lines only clutter the map
+const MIN_LOOP_KM2 = 5;
+const MIN_LINE_KM = 0.5;
+const km = (a: number[], b: number[]) => Math.hypot((a[0] - b[0]) * Math.cos(a[1] * Math.PI / 180), a[1] - b[1]) * 111.32;
+const tooSmall = (pts: number[][]): boolean => {
+    if (pts.length > 3 && km(pts[0], pts[pts.length - 1]) < 0.01) {
+        const scale = Math.cos(pts[0][1] * Math.PI / 180);
+        let sum = 0;
+        for (let k = 0; k < pts.length - 1; k++) sum += pts[k][0] * scale * pts[k + 1][1] - pts[k + 1][0] * scale * pts[k][1];
+        return Math.abs(sum) / 2 * 111.32 * 111.32 < MIN_LOOP_KM2;
+    }
+    let length = 0;
+    for (let k = 1; k < pts.length; k++) length += km(pts[k - 1], pts[k]);
+    return length < MIN_LINE_KM;
+};
+
 const lines: number[][] = [];
-let read = 0, kept = 0;
+let read = 0, kept = 0, dropped = 0;
 for (let at = 100; at < shp.length;) {
     const size = view.getInt32(at + 4, false) * 2;
     const rec = at + 8;
@@ -43,7 +59,7 @@ for (let at = 100; at < shp.length;) {
         const pts: number[][] = [];
         for (let k = from; k < to; k++) pts.push([view.getFloat64(first + k * 16, true), view.getFloat64(first + k * 16 + 8, true)]);
         read += pts.length;
-        if (pts.length < 2) continue;
+        if (pts.length < 2 || tooSmall(pts)) { dropped++; continue; }
         const line: number[] = [];
         let px = 0, py = 0;
         for (const [lon, lat] of thin(pts)) {
@@ -57,4 +73,4 @@ for (let at = 100; at < shp.length;) {
 }
 const out = new URL("../data/borders.json", import.meta.url);
 await Deno.writeTextFile(out, JSON.stringify({ source: "LSIB, U.S. Department of State", unit: UNIT, lines }));
-console.log(`${lines.length} lines, ${read} points read, ${kept} kept, ${(await Deno.stat(out)).size} bytes`);
+console.log(`${lines.length} lines, ${dropped} small loops and stubs dropped, ${read} points read, ${kept} kept, ${(await Deno.stat(out)).size} bytes`);
