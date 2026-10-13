@@ -220,6 +220,7 @@
     const STORAGE_KEY = 'metrocity_edits_v2' + (altData ? ':' + altData : '');
     const VIEW_KEY = 'metrocity_view';
     const USER_KEY = 'metrocity_user';
+    const RESUME_KEY = 'metrocity_resume'; // edit mode and selection, carried over the reload that follows a deploy
     const PLACES_URL = 'res/cities5000.txt'; // GeoNames dump: places over 5,000 people, tab separated with a header row
     const STATE_CODES_URL = 'res/state_codes.json'; // country -> GeoNames admin1 code -> state code, built by build_state_codes.ts
     const MIN_EDIT_ZOOM = 8;       // vertex handles are hidden below this zoom
@@ -615,7 +616,19 @@
         })
         .catch(() => { /* asked again at the next interval */ });
     }
-    setInterval(() => { if (!newVersion && Array.from(committed.values()).some(entry => entry.push)) checkVersion(); }, 15000);
+    // A tab with pushed commits reloads itself once their deploy lands, keeping edit mode and the
+    // selected city. It waits while a drag, a drawing or a half-typed name or population is under
+    // way; the notice and its Reload button stay up meanwhile.
+    const awaitingDeploy = () => Array.from(committed.values()).some(entry => entry.push);
+    function reloadWhenIdle() {
+      if (!newVersion || !awaitingDeploy() || drag || drawing || pushing || ['cityName', 'cityPop'].includes((document.activeElement || {}).id)) return;
+      try { sessionStorage.setItem(RESUME_KEY, JSON.stringify({ edit: editMode, selected: selectedId })); } catch (_) { /* reloads without them */ }
+      location.reload();
+    }
+    setInterval(() => {
+      if (newVersion) reloadWhenIdle();
+      else if (awaitingDeploy()) checkVersion().then(reloadWhenIdle);
+    }, 5000);
     window.addEventListener('focus', () => { if (dataVersion && !newVersion) checkVersion(); });
 
     function setUser(name) {
@@ -1609,6 +1622,15 @@
         $('loading').style.display = 'none';
         const restored = $('status').textContent, warn = $('status').className === 'warn';
         afterChange();
+        try {
+          const resume = JSON.parse(sessionStorage.getItem(RESUME_KEY));
+          sessionStorage.removeItem(RESUME_KEY);
+          if (resume && resume.edit && !readOnly) {
+            $('editMode').checked = true;
+            $('editMode').dispatchEvent(new Event('change'));
+          }
+          if (resume && cities.has(resume.selected)) select(resume.selected);
+        } catch (_) { /* starts as a fresh visit */ }
         if (restored) setStatus(restored, warn);
         if (readOnly) {
           $('editMode').disabled = true;
