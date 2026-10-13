@@ -1,7 +1,7 @@
 // Run after tools/build.ts:  deno test -A tests/   or   node --test tests/api.test.ts
 
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 import { route, type Service } from "../src/api.ts";
 import { validateBorder } from "../src/borders.ts";
@@ -83,6 +83,21 @@ test("country code rules", () => {
     assert.equal(validateBorder("CN", "HK", "Hong Kong, HK"), "Shenzhen, (GD), CN");
     assert.equal(validateBorder("CG", "CD", "Kinshasa, CD"), "Brazzaville, CG");
     assert.equal(validateBorder("CD", "CG", "Brazzaville, CG"), "Kinshasa, CD");
+});
+
+test("a city's own centre answers that city", async () => {
+    // Two centres sat just outside their outline in the original trace
+    const known = ["Al Jadid, LY", "Bacolod City, PH"];
+    const dir = new URL("../data/cities/", import.meta.url);
+    const wrong: string[] = [];
+    for (const name of await readdir(dir)) {
+        for (const line of (await readFile(new URL(name, dir), "utf8")).split("\n")) {
+            if (!line.trim()) continue;
+            const c = JSON.parse(line);
+            if (svc.names[svc.lookup.cityAt(c.lo, c.la)] !== c.n) wrong.push(c.n);
+        }
+    }
+    assert.deepEqual(wrong.sort(), known);
 });
 
 test("city records", () => {
