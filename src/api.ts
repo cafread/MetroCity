@@ -11,7 +11,7 @@ const BYTES_PER_POINT = 256;
 const text = (body: string, status: number) => new Response(body, { status });
 
 // Reads the body as JSON, or returns null once it passes max bytes
-async function readJson(request: Request, max: number): Promise<unknown> {
+export async function readJson(request: Request, max: number): Promise<unknown> {
     if (Number(request.headers.get("content-length")) > max) return null;
     const chunks: Uint8Array[] = [];
     let size = 0;
