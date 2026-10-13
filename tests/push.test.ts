@@ -23,12 +23,12 @@ test("an update replaces the city's line and leaves the others as they were", as
     assert.deepEqual(JSON.parse(lines[0]), { ...JSON.parse(line(1, moved)), t: 9 });
 });
 
-test("a city that changed since the edit was made is a conflict, with the published city returned", async () => {
+test("a push is refused whole when a city has changed since its edit was made", async () => {
     const out = await run([{ id: 1, file: { ...alpha, population: 5 }, state: { ...alpha, population: 7 } }, { id: 2, file: beta, state: null }]);
-    assert.deepEqual(out, { status: 409, conflicts: [{ id: 1, theirs: alpha }] });
+    assert.deepEqual(out, { status: 409, changed: [1] });
 });
 
-test("a new city whose id is already published is a conflict", async () => {
+test("a new city whose id is already published is refused", async () => {
     assert.equal((await run([{ id: 3, file: null, state: city("Delta, AA", 6) }])).status, 409);
 });
 

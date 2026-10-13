@@ -234,8 +234,6 @@
     const cities = new Map();      // city id -> Leaflet polygon layer (layer.feature is the GeoJSON feature)
     const baseline = new Map();   // city id -> snapshot its edits are measured from: as loaded, or as last committed (null = no city); touched cities only
     const committed = new Map();   // city id -> { file, state, by, at, push }: the accepted snapshot, the published snapshot it replaces, and { commit, by, at } once pushed
-    const conflicts = new Map();   // city id -> the published snapshot, for a commit whose city has since changed in the published data
-    const stale = new Set();       // pending cities whose published outline changed after the edit was made
     let dataVersion = '';          // version of the published data this page loaded
     let newVersion = '';           // a later version seen since: a deploy has landed
     let pushing = false;
@@ -491,7 +489,6 @@
       const snap = snapshot(id) || baseline.get(id);
       const before = capture([id]);
       applySnapshot(id, baseline.get(id));
-      stale.delete(id);
       record(`Revert ${snap.name}`, before);
     }
 
@@ -499,7 +496,7 @@
       const ids = dirtyIds();
       if (ids.length === 0) return;
       const before = capture(ids);
-      ids.forEach(id => { applySnapshot(id, baseline.get(id)); stale.delete(id); });
+      ids.forEach(id => applySnapshot(id, baseline.get(id)));
       record(`Revert all (${ids.length})`, before);
     }
 
@@ -514,7 +511,6 @@
       if (sameState(state, file)) committed.delete(id); // back to what the file has
       else committed.set(id, { file, state, by: user, at: new Date().toISOString(), push: null });
       baseline.set(id, state);
-      stale.delete(id);
       return true;
     }
 
@@ -553,31 +549,6 @@
 
     const unpushedIds = () => Array.from(committed.keys()).filter(id => !committed.get(id).push);
 
-    // A conflict is a commit whose city changed in the published data after the edit was made.
-    // Keeping mine measures the commit from the published city as it now is; taking theirs drops it.
-    function keepMine(id) {
-      const entry = committed.get(id);
-      const name = cityName(id);
-      entry.file = conflicts.get(id);
-      entry.push = null;
-      conflicts.delete(id);
-      if (sameState(entry.file, entry.state)) committed.delete(id);
-      afterChange(`Kept your ${name}; push to publish it`);
-    }
-
-    function takeTheirs(id) {
-      const name = cityName(id);
-      applySnapshot(id, conflicts.get(id));
-      committed.delete(id);
-      baseline.delete(id);
-      conflicts.delete(id);
-      const untouched = op => !(id in op.after);
-      undoStack = undoStack.filter(untouched);
-      redoStack = redoStack.filter(untouched);
-      if (cities.has(id)) restyle(id);
-      afterChange(`Took the published ${name}`);
-    }
-
     function changeEntry(id, file, now, extra) {
       if (!now) return { action: 'delete', id, name: file.name, ...extra };
       return {
@@ -594,11 +565,11 @@
 
     // Push sends the unpushed commits to the server (POST /edit/push), which writes them to the
     // published data as one change or refuses them all. Each goes with the published city it was
-    // made from, so the server can tell when that city has changed since. The page is locked while
-    // the request is out. A pushed commit is settled by the load that follows its deploy.
+    // made from, and the server refuses the push when any of those has changed since. The page is
+    // locked while the request is out. A pushed commit is settled by the load that follows its deploy.
     async function push() {
       const entries = unpushedIds().map(id => [id, committed.get(id)]);
-      if (user === 'anon' || entries.length === 0 || pushing || readOnly || conflicts.size) return;
+      if (user === 'anon' || entries.length === 0 || pushing || readOnly) return;
       const toFile = snap => snap && { name: snap.name, population: snap.population, lat: snap.lat, lon: snap.lon, coordinates: wrapRings(snap.coordinates, wrapOut) };
       const count = `${entries.length} ${entries.length === 1 ? 'commit' : 'commits'}`;
       pushing = true;
@@ -606,10 +577,9 @@
       try {
         const res = await fetch('/edit/push', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user, changes: entries.map(([id, entry]) => ({ id, file: toFile(entry.file), state: toFile(entry.state) })) }) });
         const reply = await res.json().catch(() => ({}));
-        if (res.status === 409 && Array.isArray(reply.conflicts)) {
-          reply.conflicts.forEach(c => conflicts.set(c.id, c.theirs && { id: c.id, ...c.theirs, coordinates: wrapRings(c.theirs.coordinates, wrapIn) }));
-          afterChange();
-          setStatus(`Push refused: ${conflicts.size} ${conflicts.size === 1 ? 'city has' : 'cities have'} changed in the published data. Choose Mine or Theirs for each, then push again`, true);
+        if (res.status === 409) {
+          $('deployNote').style.display = 'block';
+          setStatus('Push refused: the published data has changed under these commits. Reload to pick it up; commits made on the old data are dropped', true);
         } else if (!res.ok) {
           throw new Error(Array.isArray(reply.problems) ? reply.problems.join('; ') : res.status === 501 ? 'this server does not accept pushes' : `HTTP ${res.status}`);
         } else {
@@ -689,7 +659,7 @@
       committed.forEach((entry, id) => { commits[id] = entry; });
       try {
         if (Object.keys(changes).length === 0 && committed.size === 0) localStorage.removeItem(STORAGE_KEY);
-        else localStorage.setItem(STORAGE_KEY, JSON.stringify({ savedAt: new Date().toISOString(), changes, committed: commits, stale: Array.from(stale).filter(id => id in changes) }));
+        else localStorage.setItem(STORAGE_KEY, JSON.stringify({ savedAt: new Date().toISOString(), changes, committed: commits }));
       } catch (err) {
         console.error('Could not save edits to localStorage:', err);
         setStatus('Could not save edits in this browser: ' + err.message, true);
@@ -716,17 +686,19 @@
         return snap;
       };
       // Each saved city is checked against the published data just loaded, which may be newer than
-      // the data the edit was made on. Committed states first, then the pending edits on top of them.
+      // the data the edit was made on. An edit is replayed only onto the exact city it was made from;
+      // anything else is dropped, since losing a tweak is cheaper than publishing a stale outline.
+      // Committed states first, then the pending edits on top of them.
       const commits = saved.committed || {};
       const changes = saved.changes || {};
       const published = new Map();
       Object.keys({ ...commits, ...changes }).forEach(key => published.set(Number(key), snapshot(Number(key))));
-      let live = 0;
+      let live = 0, dropped = 0;
       Object.keys(commits).forEach(key => {
         const id = Number(key);
         const entry = { file: toMap(commits[key].file, id), state: toMap(commits[key].state, id), by: commits[key].by, at: commits[key].at, push: commits[key].push || null };
-        if (sameState(published.get(id), entry.state)) { live++; return; } // deployed, or the same change made elsewhere
-        if (!sameState(published.get(id), entry.file)) conflicts.set(id, published.get(id));
+        if (sameState(published.get(id), entry.state)) { live++; return; }
+        if (!sameState(published.get(id), entry.file)) { dropped++; return; }
         committed.set(id, entry);
         baseline.set(id, entry.state);
         applySnapshot(id, entry.state);
@@ -735,25 +707,19 @@
       Object.keys(changes).forEach(key => {
         const id = Number(key);
         const original = toMap(changes[key].original, id), current = toMap(changes[key].current, id);
-        if (committed.has(id)) {
-          baseline.set(id, original);
-        } else {
-          // Measured from the published city, so Revert returns to what is live now
-          if (sameState(published.get(id), current)) return;
-          if (!sameState(published.get(id), original) || (saved.stale || []).includes(id)) stale.add(id);
-          baseline.set(id, published.get(id));
-        }
+        const base = committed.has(id) ? committed.get(id).state : published.get(id);
+        if (!sameState(base, original)) { dropped++; return; }
+        baseline.set(id, original);
         pending++;
         applySnapshot(id, current);
       });
       const parts = [];
       if (pending || committed.size) parts.push(`Restored ${pending} pending and ${committed.size} committed ${pending + committed.size === 1 ? 'city' : 'cities'} saved in this browser`);
       if (live) parts.push(`${live} ${live === 1 ? 'commit is' : 'commits are'} now live`);
-      if (conflicts.size + stale.size) parts.push(`${conflicts.size + stale.size} changed in the published data since: marked conflict`);
-      if (parts.length) setStatus(parts.join('. '), conflicts.size + stale.size > 0);
+      if (dropped) parts.push(`${dropped} saved ${dropped === 1 ? 'edit was' : 'edits were'} dropped: the published data changed under ${dropped === 1 ? 'it' : 'them'}`);
+      if (parts.length) setStatus(parts.join('. '), dropped > 0);
     }
 
-    // Geometry helpers
     function boundsMiss(layer, box) {
       const b = layer.getBounds();
       return b.getWest() > box.e || b.getEast() < box.w || b.getSouth() > box.n || b.getNorth() < box.s;
@@ -1327,7 +1293,7 @@
       $('cityFacts').innerHTML = facts;
       const dirty = baseline.has(id) && isDirty(id);
       const entry = committed.get(id);
-      $('committedNote').textContent = entry ? `Committed by ${entry.by}, ${conflicts.has(id) ? 'in conflict with the published city' : entry.push ? 'pushed by ' + entry.push.by + ', awaiting deploy' : 'not pushed'}` : '';
+      $('committedNote').textContent = entry ? `Committed by ${entry.by}, ${entry.push ? 'pushed by ' + entry.push.by + ', awaiting deploy' : 'not pushed'}` : '';
       // Not the disabled attribute: a browser drops the click on a button that was disabled at
       // mouse-down, which is the moment a rename is still being applied
       $('commitCityBtn').classList.toggle('inactive', !dirty);
@@ -1352,7 +1318,7 @@
     }
 
     function listItem(id, name, kind, actions, title) {
-      const tagClass = { new: 'new', deleted: 'deleted', conflict: 'deleted', 'awaiting deploy': 'pushed' }[kind] || '';
+      const tagClass = { new: 'new', deleted: 'deleted', 'awaiting deploy': 'pushed' }[kind] || '';
       const buttons = actions.map(a => `<button class="small" data-act="${a.toLowerCase()}">${a}</button>`).join('');
       return `<div class="change-item" data-id="${id}"><span class="name" title="${esc(title || name)}">${esc(name)}</span><span class="tag ${tagClass}">${kind}</span>${buttons}</div>`;
     }
@@ -1363,22 +1329,18 @@
       $('changesPanel').style.display = pending.length || committed.size ? 'block' : 'none';
       $('changesTitle').textContent = `Pending changes (${pending.length})`;
       $('pendingButtons').style.display = pending.length ? 'flex' : 'none';
-      // A pending conflict is settled with the usual buttons: Commit keeps the edit, Revert takes the published city
-      $('changeList').innerHTML = pending.map(id => listItem(id, cityName(id), stale.has(id) ? 'conflict' : changeKind(baseline.get(id), snapshot(id)), ['Commit', 'Revert'],
-        stale.has(id) ? 'The published city changed after this edit was made. Commit keeps the edit, Revert takes the published city' : '')).join('');
+      $('changeList').innerHTML = pending.map(id => listItem(id, cityName(id), changeKind(baseline.get(id), snapshot(id)), ['Commit', 'Revert'])).join('');
       $('committedTitle').textContent = `Committed (${committed.size})`;
       $('committedList').innerHTML = Array.from(committed, ([id, entry]) => listItem(
         id,
         (entry.state || entry.file).name,
-        conflicts.has(id) ? 'conflict' : entry.push ? 'awaiting deploy' : changeKind(entry.file, entry.state),
-        conflicts.has(id) ? ['Mine', 'Theirs'] : entry.push ? [] : ['Uncommit'],
-        `Committed by ${entry.by} at ${entry.at}` + (entry.push ? `, pushed by ${entry.push.by} at ${entry.push.at} as ${entry.push.commit}` : '') +
-          (conflicts.has(id) ? '. The published city changed after this edit was made: Mine keeps the commit, Theirs takes the published city' : '')
+        entry.push ? 'awaiting deploy' : changeKind(entry.file, entry.state),
+        entry.push ? [] : ['Uncommit'],
+        `Committed by ${entry.by} at ${entry.at}` + (entry.push ? `, pushed by ${entry.push.by} at ${entry.push.at} as ${entry.push.commit}` : '')
       )).join('');
-      const ready = unpushed.filter(id => !conflicts.has(id)).length;
-      $('pushBtn').textContent = ready ? `Push (${ready})` : 'Push';
-      $('pushBtn').disabled = user === 'anon' || unpushed.length === 0 || conflicts.size > 0 || readOnly;
-      $('pushBtn').title = conflicts.size ? 'Settle the conflicts first' : user === 'anon' ? 'Log in to push the commits' : 'Publish the commits';
+      $('pushBtn').textContent = unpushed.length ? `Push (${unpushed.length})` : 'Push';
+      $('pushBtn').disabled = user === 'anon' || unpushed.length === 0 || readOnly;
+      $('pushBtn').title = user === 'anon' ? 'Log in to push the commits' : 'Publish the commits';
     }
 
     function onChangeListClick(e) {
@@ -1389,8 +1351,6 @@
       if (act === 'commit') commitCities([id]);
       else if (act === 'revert') revertCity(id);
       else if (act === 'uncommit') uncommitCity(id);
-      else if (act === 'mine') keepMine(id);
-      else if (act === 'theirs') takeTheirs(id);
       else if (cities.has(id)) { select(id); map.fitBounds(cities.get(id).getBounds()); }
     }
     $('changeList').addEventListener('click', onChangeListClick);

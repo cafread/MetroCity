@@ -10,7 +10,7 @@ export type Snapshot = { name: string; population: number; lat: number; lon: num
 export type Change = { id: number; file: Snapshot | null; state: Snapshot | null };
 export type Outcome =
     | { status: 200; files: Record<string, string | null> }
-    | { status: 409; conflicts: { id: number; theirs: Snapshot | null }[] }
+    | { status: 409; changed: number[] }
     | { status: 422; problems: string[] };
 
 export const MAX_CHANGES = 500;
@@ -34,13 +34,6 @@ function toRecord(id: number, s: Snapshot, t: number): City {
     }
     if (g.length > 2 && g[0] === g[g.length - 2] && g[1] === g[g.length - 1]) g.length -= 2;
     return { i: id, n: s.name, p: s.population, la: s.lat, lo: s.lon, t, g };
-}
-
-function toSnapshot(c: City): Snapshot {
-    const ring: number[][] = [];
-    for (let j = 0; j < c.g.length; j += 2) ring.push([c.g[j] / SCALE, c.g[j + 1] / SCALE]);
-    ring.push(ring[0]);
-    return { name: c.n, population: c.p, lat: c.la, lon: c.lo, coordinates: [ring] };
 }
 
 const same = (a: City, b: City) => a.n === b.n && a.p === b.p && a.la === b.la && a.lo === b.lo && a.g.length === b.g.length && a.g.every((v, k) => v === b.g[k]);
@@ -69,13 +62,14 @@ export async function applyChanges(input: unknown, names: Record<string, string>
         }
     }
 
-    const conflicts: { id: number; theirs: Snapshot | null }[] = [];
+    // Cities that are no longer as they were when the edit was made
+    const changed: number[] = [];
     for (const c of changes) {
         const current = c.file ? files.get(country(c.file.name))!.find((e) => e.r.i === c.id)?.r : undefined;
         const unchanged = c.file ? current !== undefined && same(current, toRecord(c.id, c.file, current.t)) : !(c.id in names);
-        if (!unchanged) conflicts.push({ id: c.id, theirs: current ? toSnapshot(current) : null });
+        if (!unchanged) changed.push(c.id);
     }
-    if (conflicts.length) return { status: 409, conflicts };
+    if (changed.length) return { status: 409, changed };
 
     const problems: string[] = [];
     const after: Record<string, string> = { ...names };
