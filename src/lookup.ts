@@ -6,7 +6,8 @@ export const SCALE = 1e7;
 export const ROOT = -180 * SCALE;
 export const ROOT_SIZE = 360 * SCALE;
 
-export type Lookup = { cities: number; cityAt(lon: number, lat: number): number };
+// near lists the cities whose bounding box meets the given one, with their outlines
+export type Lookup = { cities: number; cityAt(lon: number, lat: number): number; near(x0: number, y0: number, x1: number, y1: number): { id: number; g: number[] }[] };
 
 export function createLookup(buffer: ArrayBuffer): Lookup {
     const head = new Uint32Array(buffer, 0, 8);
@@ -39,6 +40,14 @@ export function createLookup(buffer: ArrayBuffer): Lookup {
 
     return {
         cities: nCity,
+        near(x0: number, y0: number, x1: number, y1: number) {
+            const out: { id: number; g: number[] }[] = [];
+            for (let c = 0; c < nCity; c++) {
+                if (box[c * 4] > x1 || box[c * 4 + 2] < x0 || box[c * 4 + 1] > y1 || box[c * 4 + 3] < y0) continue;
+                out.push({ id: ids[c], g: Array.from(xy.subarray(start[c] * 2, start[c + 1] * 2)) });
+            }
+            return out;
+        },
         cityAt(lon: number, lat: number): number {
             const x = lon * SCALE, y = lat * SCALE;
             let x0 = ROOT, y0 = ROOT, size = ROOT_SIZE, n = nodes[0];

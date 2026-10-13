@@ -101,7 +101,7 @@ test("a city's own centre answers that city", async () => {
 });
 
 test("city records", () => {
-    const ok = { i: 5, n: "Springfield, (IL), US", p: 100, la: 39.8, lo: -89.6, t: 1, g: [0, 0, 10, 0, 10, 10] };
+    const ok = { i: 5, n: "Springfield, (IL), US", p: 100, la: 39.8, lo: -89.6, t: 1, g: [-896000000, 398000000, -895000000, 398000000, -895000000, 399000000] };
     assert.equal(cityProblem(ok, "US"), "");
     assert.equal(cityProblem({ ...ok, n: "Al-`Ula, US" }, "US"), "");
     const bad: [string, unknown][] = [
@@ -110,6 +110,7 @@ test("city records", () => {
         ["markup", { ...ok, n: "<img src=x>, US" }], ["long name", { ...ok, n: "A".repeat(60) + ", US" }], ["text population", { ...ok, p: "100" }],
         ["degrees", { ...ok, g: [10.2, 10.2, 10.9, 10.2, 10.9, 10.9] }], ["past int32", { ...ok, g: [3e9, 0, 10, 0, 10, 10] }], ["past 180", { ...ok, g: [1790000000, 0, 1810000000, 0, 1800000000, 10] }],
         ["text outline", { ...ok, g: "abcdef" }], ["two points", { ...ok, g: [0, 0, 10, 0] }], ["a line", { ...ok, g: [0, 0, 5, 5, 10, 10] }],
+        ["closed ring", { ...ok, g: [...ok.g, ok.g[0], ok.g[1]] }], ["repeated point", { ...ok, g: [ok.g[0], ok.g[1], ...ok.g] }], ["far from its centre", { ...ok, la: 30 }],
         ["missing field", { i: 5, n: ok.n, p: 1, la: 1, lo: 1, t: 1 }], ["extra field", { ...ok, x: 1 }], ["array", [ok]],
     ];
     for (const [what, record] of bad) assert.notEqual(cityProblem(record, "US"), "", what);

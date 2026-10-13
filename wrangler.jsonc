@@ -6,7 +6,8 @@
     "preview_urls": true,
     "assets": { "directory": "./public", "binding": "ASSETS" },
     "build": { "command": "node tools/build.ts" },
-    // The editor's routes answer only on EDIT_HOST. GITHUB_TOKEN, GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are secrets, set in the dashboard.
-    "vars": { "REQ_LIMIT": "1000", "EDIT_HOST": "metrocity.colin-read.workers.dev", "EDIT_REPO": "cafread/MetroCity", "EDIT_BRANCH": "main", "EDITORS": "cafread" },
+    // The editor's routes answer only on EDIT_HOST. EDITOR_IDS are GitHub account ids. GITHUB_TOKEN, GITHUB_CLIENT_ID,
+    // GITHUB_CLIENT_SECRET, SESSION_KEY and DEPLOY_HOOK are secrets, set in the dashboard.
+    "vars": { "REQ_LIMIT": "1000", "EDIT_HOST": "metrocity.colin-read.workers.dev", "EDIT_REPO": "cafread/MetroCity", "EDIT_BRANCH": "main", "EDITOR_IDS": "41902911" },
     "previews": { "vars": { "REQ_LIMIT": "1000" } }
 }
