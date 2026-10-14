@@ -7,7 +7,7 @@
 import process from "node:process";
 import { bbox, km, loadCities, locate, overlaps, selfTouches } from "./geom.ts";
 
-const KNOWN_SELF_TOUCH = ["Bihac, BA", "Damascus, SY", "Darbhanga, (BR), IN", "Gorzow Wielkopolski, PL", "Leicester, GB", "Mokolo, CM", "Sinop, TR", "Vyborg, RU", "Zhuhai, (GD), CN"];
+const KNOWN_SELF_TOUCH = ["Bihac, BA", "Sinop, TR", "Zhuhai, (GD), CN"];
 const [dir = "data/cities", olderDir] = process.argv.slice(2);
 const cities = await loadCities(dir);
 const boxes = cities.map((c) => bbox(c.g));

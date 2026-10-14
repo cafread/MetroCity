@@ -17,7 +17,7 @@ const svc: Service = {
     version: "test",
     started: Date.now(),
 };
-const DIFFERENT_ROWS = [140, 184, 366, 547, 782, 858, 1076, 1201, 1438, 1580, 1596, 1749, 1810, 1892, 1961, 1962, 1963, 1964];
+const DIFFERENT_ROWS = [0, 95, 140, 184, 366, 547, 782, 858, 914, 1076, 1201, 1373, 1376, 1438, 1580, 1596, 1749, 1766, 1810, 1892, 1961, 1962, 1963, 1964];
 const call = (method: string, path: string, body?: string, service = svc) =>
     route(new Request(`http://localhost${path}`, { method, body, headers: body ? { "content-type": "application/json" } : undefined }), service);
 const post = async (body: unknown, service = svc) => {
@@ -36,7 +36,10 @@ test("GeoNames places agree with the tile-based API", async () => {
     const got: Record<string, string> = {};
     for (let i = 0; i < points.length; i += 1000) Object.assign(got, (await post(points.slice(i, i + 1000))).body);
     // Known disagreements: eight from simplifying the trace, the rest are places across a closed border from
-    // the city that used to cover them, which had no answer and now answer a city in their own country
+    // the city that used to cover them, which had no answer and now answer a city in their own country; rows 0
+    // and 95 are in Andorra and Aruba, which had no city until Andorra la Vella, AD and Oranjestad, AW were added;
+    // row 1766 went from Waco, (TX), US to College Station, (TX), US when that city was added; row 914 had no city
+    // until Agartala, (TR), IN was added; rows 1373 (in Huelva, ES on the old tiles) and 1376 answer Faro, PT
     const different = rows.map((r, i) => (got[i] !== r[3] ? i : -1)).filter((i) => i >= 0);
     assert.deepEqual(different, DIFFERENT_ROWS);
 });
