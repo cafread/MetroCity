@@ -90,6 +90,8 @@
     }
     .leaflet-tooltip.city-name { background: #fff; border: none; border-radius: 3px; box-shadow: none; color: #111; padding: 2px 7px; font: 600 14px/1.3 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
     .leaflet-tooltip.city-name::before { display: none; }
+    /* A clicked outline takes focus; the browser's focus ring is drawn round its bounding box */
+    path.leaflet-interactive:focus { outline: none; }
     #devErrors { display: none; background: #ffebee; color: #b71c1c; font-size: 11px; font-family: monospace; white-space: pre-wrap; word-break: break-word; }
     #map.tool-add, #map.drawing { cursor: crosshair; }
     #map.tool-delete .leaflet-interactive { cursor: not-allowed; }
