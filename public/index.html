@@ -88,6 +88,8 @@
       box-shadow: 0 2px 10px rgba(0,0,0,0.2);
       z-index: 1000;
     }
+    .leaflet-tooltip.city-name { background: #fff; border: none; border-radius: 3px; box-shadow: none; color: #111; padding: 2px 7px; font: 600 14px/1.3 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+    .leaflet-tooltip.city-name::before { display: none; }
     #devErrors { display: none; background: #ffebee; color: #b71c1c; font-size: 11px; font-family: monospace; white-space: pre-wrap; word-break: break-word; }
     #map.tool-add, #map.drawing { cursor: crosshair; }
     #map.tool-delete .leaflet-interactive { cursor: not-allowed; }
@@ -224,6 +226,7 @@
     const SNAP_EDGE_PX = 14;       // pull radius towards an edge or country border
     const ADD_VERTEX_PX = 15;      // how close to an edge a click must be to add a vertex
     const CLOSE_RING_PX = 12;      // clicking this close to the first point finishes a new city
+    const NAME_OPACITY = 0.5;      // the city name shown on hover
     const EPS = 1e-9;              // coordinates closer than this are the same vertex
 
     // State. The polygons' GeoJSON coordinates are the only copy of the geometry: a vertex
@@ -339,6 +342,9 @@
 
     function onEachFeature(feature, layer) {
       cities.set(feature.properties.id, layer);
+      // The name follows the pointer; read when shown, so a rename shows at once. A text node, as names typed here are not checked
+      layer.bindTooltip(() => document.createTextNode(feature.properties.name), { sticky: true, direction: 'top', offset: [0, -10], opacity: NAME_OPACITY, className: 'city-name' });
+      layer.on('tooltipopen', () => { if (drag || drawing) layer.closeTooltip(); });
       layer.on({
         mouseover: () => { if (!drag && !drawing) layer.setStyle({ weight: 3, fillOpacity: 0.8 }); },
         mouseout: () => restyle(feature.properties.id),
