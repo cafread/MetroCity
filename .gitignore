@@ -2,3 +2,12 @@ public/data/
 .wrangler/
 node_modules/
 *.log
+
+# Agent and editor files: skills, briefs and settings live with the tools, not in this repo
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+.cursor/
+.vscode/
+.idea/
