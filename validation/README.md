@@ -9,12 +9,14 @@ The service answers from outlines; these scripts are how the outlines were shown
 | `outlines.ts` | No two outlines overlap; no outline newly crosses or touches itself; which centres fall outside their own outline; which outlines reach past 110 km, and with an older copy of the data, which grew | The data only |
 | `places.ts` | No GeoNames place falls in a city of a country closed to its own | GeoNames `cities500.txt` (236,000 places; a 14 MB download) |
 | `compare.ts` | What a change does to real positions: for each one whose city changes, what kind of change | A file of positions with country codes, and two builds |
+| `spikes.ts` | Spikes, slits and pieces joined by a neck under 500 m; reports only, worst first | The data only |
 
 ```
 deno run --allow-read validation/outlines.ts data/cities
 deno run -A tools/build.ts
 deno run --allow-read --allow-write validation/places.ts path/to/cities500.txt out.tsv
 deno run --allow-read validation/compare.ts path/to/positions.tsv before/ public/data
+deno run --allow-read validation/spikes.ts data/cities
 ```
 
 `tests/` holds the checks that run in seconds with no outside data, including that every city's centre answers that city.
