@@ -17,7 +17,7 @@ const svc: Service = {
     version: "test",
     started: Date.now(),
 };
-const DIFFERENT_ROWS = [0, 95, 140, 184, 366, 547, 782, 858, 914, 1076, 1201, 1373, 1376, 1438, 1580, 1596, 1749, 1766, 1810, 1892, 1917, 1961, 1962, 1963, 1964];
+const DIFFERENT_ROWS = [0, 95, 140, 184, 366, 547, 714, 782, 858, 914, 1076, 1201, 1373, 1376, 1438, 1580, 1596, 1749, 1766, 1810, 1892, 1917, 1961, 1962, 1963, 1964];
 const call = (method: string, path: string, body?: string, service = svc) =>
     route(new Request(`http://localhost${path}`, { method, body, headers: body ? { "content-type": "application/json" } : undefined }), service);
 const post = async (body: unknown, service = svc) => {
