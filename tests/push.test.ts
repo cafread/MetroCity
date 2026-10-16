@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyChanges, MAX_CHANGES, MAX_COUNTRIES, type Published, type Snapshot } from "../src/push.ts";
+import { applyChanges, commitMessage, MAX_CHANGES, MAX_COUNTRIES, MAX_MESSAGE, type Published, type Snapshot } from "../src/push.ts";
 
 const square = (x: number, y = 10, size = 1): number[][][] => [[[x, y], [x + size, y], [x + size, y + size], [x, y + size], [x, y]]];
 const city = (name: string, x: number): Snapshot => ({ name, population: 1000, lat: 10.5, lon: x + 0.5, coordinates: square(x) });
@@ -97,4 +97,15 @@ test("a push may not empty the data, span too many countries, or write a country
     const wide = Array.from({ length: MAX_COUNTRIES + 1 }, (_, k) => ({ id: 5000 + k, file: null, state: city(`New ${letters(k)}, ${letters(k).slice(0, 2).toUpperCase()}`, 8 + 2 * k) }));
     assert.match(await problems(wide), /at most 40 countries/);
     await assert.rejects(run([{ id: 9, file: null, state: city("Delta, AA", 6) }], { ...published, read: () => Promise.resolve(null) }), /could not be read/);
+});
+
+test("a commit message is trimmed and loses control characters other than newline; one that is not text or too long is refused", () => {
+    assert.equal(commitMessage(undefined), "");
+    assert.equal(commitMessage(null), "");
+    assert.equal(commitMessage("   "), "");
+    assert.equal(commitMessage("  Fix\tthe Lyon\u0007 outline\r\n\nsee issue 4 \u009b "), "Fixthe Lyon outline\n\nsee issue 4");
+    assert.equal(commitMessage("x".repeat(MAX_MESSAGE)), "x".repeat(MAX_MESSAGE));
+    assert.equal(commitMessage(` ${"x".repeat(MAX_MESSAGE)}\u0000 `), "x".repeat(MAX_MESSAGE));
+    assert.equal(commitMessage("x".repeat(MAX_MESSAGE + 1)), null);
+    for (const input of [42, true, ["a"], { text: "a" }]) assert.equal(commitMessage(input), null);
 });

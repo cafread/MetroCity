@@ -4,7 +4,7 @@
 import { readJson } from "./api.ts";
 import { commitCities, head, readCities, type Repo } from "./github.ts";
 import type { Lookup } from "./lookup.ts";
-import { applyChanges } from "./push.ts";
+import { applyChanges, commitMessage, MAX_MESSAGE } from "./push.ts";
 
 const SETTINGS = ["EDIT_HOST", "EDIT_REPO", "EDIT_BRANCH", "EDITOR_IDS", "GITHUB_TOKEN", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET", "SESSION_KEY", "DEPLOY_HOOK"] as const;
 // EDIT_HOST        the only host these routes answer on
@@ -75,9 +75,11 @@ const askForBuild = (env: EditEnv, ctx: EditContext): Promise<string> =>
 
 async function push(request: Request, user: string, env: EditEnv, ctx: EditContext): Promise<Response> {
     const refuse = (status: number, problem: string) => Response.json({ problems: [problem] }, { status });
-    let body: { changes?: unknown } | null;
-    try { body = await readJson(request, MAX_BODY) as { changes?: unknown } | null; } catch { return refuse(400, "the request could not be read"); }
+    let body: { changes?: unknown; message?: unknown } | null;
+    try { body = await readJson(request, MAX_BODY) as { changes?: unknown; message?: unknown } | null; } catch { return refuse(400, "the request could not be read"); }
     if (body === null) return refuse(413, `a push may be at most ${MAX_BODY / 1_000_000} MB`);
+    const message = commitMessage(body?.message);
+    if (message === null) return refuse(422, `the commit message must be text of at most ${MAX_MESSAGE} characters`);
     const repo = repoOf(env, ctx);
     let at = "";
     try {
@@ -88,7 +90,8 @@ async function push(request: Request, user: string, env: EditEnv, ctx: EditConte
         const result = await applyChanges(body?.changes, { names: ctx.names, near: ctx.near, read: (cc) => readCities(repo, at, cc) }, Date.now());
         if (result.status !== 200) return Response.json(result, { status: result.status });
         const count = (body!.changes as unknown[]).length;
-        const commit = await commitCities(repo, at, result.files, `Editor push by ${user}: ${count} ${count === 1 ? "city" : "cities"}`, { name: user, email: `${user}@users.noreply.github.com` });
+        const summary = `Editor push by ${user}: ${count} ${count === 1 ? "city" : "cities"}`;
+        const commit = await commitCities(repo, at, result.files, message ? `${message}\n\n${summary}` : summary, { name: user, email: `${user}@users.noreply.github.com` });
         if (!commit) return refuse(503, "the published data moved during the push; nothing was written, push again");
         return Response.json({ commit, build: await askForBuild(env, ctx) });
     } catch (err) {

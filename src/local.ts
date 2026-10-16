@@ -5,7 +5,7 @@
 
 import { readJson, route, type Service } from "./api.ts";
 import { createLookup } from "./lookup.ts";
-import { applyChanges } from "./push.ts";
+import { applyChanges, commitMessage, MAX_MESSAGE } from "./push.ts";
 
 const root = new URL("../", import.meta.url);
 const dir = new URL("public/", root);
@@ -46,8 +46,10 @@ async function push(request: Request): Promise<Response> {
     busy = true;
     let before: Record<string, string | null> | null = null;
     try {
-        let body: { changes?: unknown } | null;
-        try { body = await readJson(request, 2_000_000) as { changes?: unknown } | null; } catch { return refuse(400, "the request could not be read"); }
+        let body: { changes?: unknown; message?: unknown } | null;
+        try { body = await readJson(request, 2_000_000) as { changes?: unknown; message?: unknown } | null; } catch { return refuse(400, "the request could not be read"); }
+        // Nothing is committed here, but a message the Worker would refuse is refused too
+        if (commitMessage(body?.message) === null) return refuse(422, `the commit message must be text of at most ${MAX_MESSAGE} characters`);
         const result = await applyChanges(body?.changes, { names: service.names, near: service.lookup.near, read: readCities }, Date.now());
         if (result.status !== 200) return Response.json(result, { status: result.status });
         const saved: Record<string, string | null> = {};

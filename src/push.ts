@@ -24,6 +24,7 @@ export type Published = {
 export const MAX_CHANGES = 100;
 // Each country file is one read from the host, and a Worker on the free plan may make 50 requests
 export const MAX_COUNTRIES = 40;
+export const MAX_MESSAGE = 500;
 
 const country = (name: string) => /, [A-Z]{2}$/.test(name) ? name.slice(-2) : "";
 
@@ -48,6 +49,15 @@ function toRecord(id: number, s: Snapshot, t: number): City {
 
 const same = (a: City, b: City) => a.n === b.n && a.p === b.p && a.la === b.la && a.lo === b.lo && a.g.length === b.g.length && a.g.every((v, k) => v === b.g[k]);
 const boxesMeet = (a: number[], b: number[]) => a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3];
+
+// The editor's own words for the commit, with control characters other than newline removed:
+// "" when there are none, null when they are not text or are too long
+export function commitMessage(input: unknown): string | null {
+    if (input === undefined || input === null) return "";
+    if (typeof input !== "string") return null;
+    const text = input.replace(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/g, "").trim();
+    return text.length <= MAX_MESSAGE ? text : null;
+}
 
 // In the files returned, null means the country is left with no cities and its file should go.
 export async function applyChanges(input: unknown, published: Published, now: number): Promise<Outcome> {

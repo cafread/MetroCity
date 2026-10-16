@@ -134,3 +134,24 @@ test("a body that is too large or not JSON is refused before anything is read fr
     assert.equal((await pushAs(gh, { raw: "x".repeat(2_000_001) })).status, 413);
     assert.equal((await pushAs(gh, { raw: "{" })).status, 400);
 });
+
+test("a push's own commit message goes before the generated one; without one the message is as before", async () => {
+    const plain = github();
+    assert.equal((await pushAs(plain)).status, 200);
+    assert.equal(plain.state.commits[0].message, "Editor push by alice: 1 city");
+    const blank = github();
+    assert.equal((await pushAs(blank, { body: { ...moved, message: " \n " } })).status, 200);
+    assert.equal(blank.state.commits[0].message, "Editor push by alice: 1 city");
+    const noted = github();
+    assert.equal((await pushAs(noted, { body: { ...moved, message: "  Redraw Alpha\u0007 to the ring road\n\nPer the 2024 survey " } })).status, 200);
+    assert.equal(noted.state.commits[0].message, "Redraw Alpha to the ring road\n\nPer the 2024 survey\n\nEditor push by alice: 1 city");
+    for (const message of [42, ["a"], "x".repeat(501)]) {
+        const gh = github();
+        const res = await pushAs(gh, { body: { ...moved, message } });
+        assert.deepEqual([res.status, (await res.json()).problems[0]], [422, "the commit message must be text of at most 500 characters"]);
+        assert.deepEqual([gh.state.commits.length, gh.state.head], [0, "c1"]);
+    }
+    // the changes are still checked as before
+    assert.equal((await pushAs(github(), { body: { message: "no changes" } })).status, 422);
+    assert.equal((await pushAs(github(), { raw: "{not json" })).status, 400);
+});
