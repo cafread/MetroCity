@@ -17,7 +17,7 @@ const svc: Service = {
     version: "test",
     started: Date.now(),
 };
-const DIFFERENT_ROWS = [0, 95, 140, 170, 174, 184, 285, 312, 366, 529, 532, 547, 714, 739, 777, 782, 787, 856, 858, 912, 914, 999, 1076, 1201, 1242, 1265, 1276, 1279, 1283, 1290, 1373, 1376, 1438, 1520, 1580, 1596, 1749, 1766, 1794, 1810, 1892, 1917, 1961, 1962, 1963, 1964];
+const DIFFERENT_ROWS = [0,  95,  140,  170,  174,  184,  256,  285,  312,  366,  529,  532,  547,  714,  739,  777,  782,  787,  856,  858,  912,  914,  999,  1076,  1110,  1201,  1242,  1265,  1276,  1279,  1283,  1290,  1373,  1376,  1438,  1520,  1580,  1596,  1749,  1766,  1794,  1810,  1826,  1892,  1917,  1961,  1962,  1963,  1964];
 const call = (method: string, path: string, body?: string, service = svc) =>
     route(new Request(`http://localhost${path}`, { method, body, headers: body ? { "content-type": "application/json" } : undefined }), service);
 const post = async (body: unknown, service = svc) => {
@@ -40,7 +40,7 @@ test("GeoNames places agree with the tile-based API", async () => {
     // and 95 are in Andorra and Aruba, which had no city until Andorra la Vella, AD and Oranjestad, AW were added;
     // row 1766 went from Waco, (TX), US to College Station, (TX), US when that city was added; row 914 had no city
     // until Agartala, (TR), IN was added; rows 1373 (in Huelva, ES on the old tiles) and 1376 answer Faro, PT
-    // Preview only (preview-all): rows 170 to 1520 not named above change with the merged pending review proposals
+    // and the other rows not named above change by design with the city review (new cities, renames, island and shore cuts)
     const different = rows.map((r, i) => (got[i] !== r[3] ? i : -1)).filter((i) => i >= 0);
     assert.deepEqual(different, DIFFERENT_ROWS);
 });
