@@ -1,7 +1,7 @@
 // Turns data/cities/*.ndjson into the files the service serves, under public/data:
 //   lookup.bin      geometry and quadtree, read in place by src/lookup.ts
 //   names.json      city id -> display name
-//   changelog.json  per city: name, last change, bounding box
+//   changelog.json  per city: name, last change, bounding box; and the cities removed (data/removed.json)
 //   cities.json     the outlines as TopoJSON, read by the editor
 //   version.json    data version, bundled into the Worker
 // Runs on Deno or Node with no dependencies: deno run -A tools/build.ts | node tools/build.ts
@@ -49,6 +49,14 @@ for (let a = 0; a < cities.length && problems.length === 0; a++) {
         if (A[2] < B[0] || B[2] < A[0] || A[3] < B[1] || B[3] < A[1]) continue;
         if (overlaps(cities[a].g, cities[b].g)) problems.push(`"${cities[a].n}" and "${cities[b].n}" overlap`);
     }
+}
+// Cities taken out of the data, so /changelog can tell consumers to drop or reassign their answers:
+// id -> { n: name, t: time removed in ms, into: id of the city that took its land, if any }
+type Removed = { n: string; t: number; into?: number };
+const removed: Record<string, Removed> = JSON.parse(await readFile(join(root, "data/removed.json"), "utf8").catch(() => "{}"));
+for (const [id, r] of Object.entries(removed)) {
+    if (ids.has(Number(id))) problems.push(`data/removed.json: ${id} (${r.n}) is still in data/cities`);
+    if (typeof r.n !== "string" || !Number.isInteger(r.t) || (r.into !== undefined && !ids.has(r.into))) problems.push(`data/removed.json: ${id} needs n, t and, if given, an into that is a current city`);
 }
 if (problems.length) {
     console.error(problems.slice(0, 50).join("\n"));
@@ -178,7 +186,7 @@ const round = (n: number) => Math.round(n / (SCALE / 1e4)) / 1e4;
 const changelog = {
     version,
     cities: Object.fromEntries(cities.map((c, k) => [c.i, { n: c.n, t: c.t, b: [round(box[k * 4]), round(box[k * 4 + 1]), round(box[k * 4 + 2]), round(box[k * 4 + 3])] }])),
-    removed: {},
+    removed,
 };
 
 const closed = (g: number[]) => {

@@ -65,7 +65,7 @@ Countries with open borders between them, such as the Schengen area, count as on
 |---|---|
 | `GET /status` | Uptime, as text |
 | `GET /version` | The data version: the Git commit the data was built from |
-| `GET /changelog` | Per city id: name, time of last change, and bounding box. Use it to decide which stored answers to refresh |
+| `GET /changelog` | Per city id: name, time of last change, and bounding box; and under `removed`, each city taken out, when, and the city that took its land. Use it to decide which stored answers to refresh |
 | `GET /info` | A link to this page |
 
 ## How to use the editor
